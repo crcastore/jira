@@ -124,13 +124,13 @@ var ToolSchemas = []openai.Tool{
 	}},
 	{Type: openai.ToolTypeFunction, Function: &openai.FunctionDefinition{
 		Name:        "gh_list_my_repos",
-		Description: "List repositories the authenticated GitHub user has access to.",
+		Description: "List repositories the authenticated GitHub user has access to. Auto-paginates through everything (up to max_total, default 300).",
 		Parameters: jsonschema.Definition{
 			Type: jsonschema.Object,
 			Properties: map[string]jsonschema.Definition{
 				"visibility": {Type: jsonschema.String, Description: "all | public | private"},
 				"sort":       {Type: jsonschema.String, Description: "created | updated | pushed | full_name"},
-				"per_page":   {Type: jsonschema.Integer},
+				"max_total":  {Type: jsonschema.Integer, Description: "cap on total repos returned"},
 			},
 		},
 	}},
@@ -345,9 +345,97 @@ var ToolSchemas = []openai.Tool{
 			Required: []string{"owner", "repo", "number", "event"},
 		},
 	}},
+	{Type: openai.ToolTypeFunction, Function: &openai.FunctionDefinition{
+		Name:        "gh_list_workflows",
+		Description: "List GitHub Actions workflows defined in a repo.",
+		Parameters: jsonschema.Definition{
+			Type: jsonschema.Object,
+			Properties: map[string]jsonschema.Definition{
+				"owner": {Type: jsonschema.String},
+				"repo":  {Type: jsonschema.String},
+			},
+			Required: []string{"owner", "repo"},
+		},
+	}},
+	{Type: openai.ToolTypeFunction, Function: &openai.FunctionDefinition{
+		Name:        "gh_run_workflow",
+		Description: "Trigger a workflow_dispatch run. workflow_id can be the numeric id or the filename (e.g. 'test.yml'). The workflow must declare `on: workflow_dispatch`.",
+		Parameters: jsonschema.Definition{
+			Type: jsonschema.Object,
+			Properties: map[string]jsonschema.Definition{
+				"owner":       {Type: jsonschema.String},
+				"repo":        {Type: jsonschema.String},
+				"workflow_id": {Type: jsonschema.String, Description: "numeric id or filename"},
+				"ref":         {Type: jsonschema.String, Description: "branch, tag, or sha (defaults to main)"},
+				"inputs":      {Type: jsonschema.Object, Description: "optional inputs map for the workflow"},
+			},
+			Required: []string{"owner", "repo", "workflow_id"},
+		},
+	}},
+	{Type: openai.ToolTypeFunction, Function: &openai.FunctionDefinition{
+		Name:        "gh_list_workflow_runs",
+		Description: "List recent workflow runs for a repo (optionally filtered by workflow_id, status, or branch).",
+		Parameters: jsonschema.Definition{
+			Type: jsonschema.Object,
+			Properties: map[string]jsonschema.Definition{
+				"owner":       {Type: jsonschema.String},
+				"repo":        {Type: jsonschema.String},
+				"workflow_id": {Type: jsonschema.String},
+				"status":      {Type: jsonschema.String, Description: "queued | in_progress | completed | success | failure | cancelled"},
+				"branch":      {Type: jsonschema.String},
+				"per_page":    {Type: jsonschema.Integer},
+			},
+			Required: []string{"owner", "repo"},
+		},
+	}},
+	{Type: openai.ToolTypeFunction, Function: &openai.FunctionDefinition{
+		Name:        "gh_get_workflow_run",
+		Description: "Fetch a single workflow run by its numeric id.",
+		Parameters: jsonschema.Definition{
+			Type: jsonschema.Object,
+			Properties: map[string]jsonschema.Definition{
+				"owner":  {Type: jsonschema.String},
+				"repo":   {Type: jsonschema.String},
+				"run_id": {Type: jsonschema.Integer},
+			},
+			Required: []string{"owner", "repo", "run_id"},
+		},
+	}},
+	{Type: openai.ToolTypeFunction, Function: &openai.FunctionDefinition{
+		Name:        "gh_wait_for_workflow_run",
+		Description: "Block (polling) until a workflow run reaches status=completed, then return it with its conclusion (success/failure/cancelled/...). Use after gh_run_workflow or when checking a run already in progress.",
+		Parameters: jsonschema.Definition{
+			Type: jsonschema.Object,
+			Properties: map[string]jsonschema.Definition{
+				"owner":         {Type: jsonschema.String},
+				"repo":          {Type: jsonschema.String},
+				"run_id":        {Type: jsonschema.Integer},
+				"timeout_sec":   {Type: jsonschema.Integer, Description: "max seconds to wait (default 600, hard cap 1800)"},
+				"interval_sec":  {Type: jsonschema.Integer, Description: "poll interval (default 5)"},
+			},
+			Required: []string{"owner", "repo", "run_id"},
+		},
+	}},
+	{Type: openai.ToolTypeFunction, Function: &openai.FunctionDefinition{
+		Name:        "gh_run_workflow_and_wait",
+		Description: "Trigger a workflow_dispatch run and block until it finishes. Prefer this over gh_run_workflow when the user wants the result. Returns the completed run with its conclusion.",
+		Parameters: jsonschema.Definition{
+			Type: jsonschema.Object,
+			Properties: map[string]jsonschema.Definition{
+				"owner":        {Type: jsonschema.String},
+				"repo":         {Type: jsonschema.String},
+				"workflow_id":  {Type: jsonschema.String, Description: "numeric id or filename"},
+				"ref":          {Type: jsonschema.String, Description: "branch, tag, or sha (defaults to main)"},
+				"inputs":       {Type: jsonschema.Object, Description: "optional inputs map"},
+				"timeout_sec":  {Type: jsonschema.Integer, Description: "max seconds to wait (default 600, hard cap 1800)"},
+				"interval_sec": {Type: jsonschema.Integer, Description: "poll interval (default 5)"},
+			},
+			Required: []string{"owner", "repo", "workflow_id"},
+		},
+	}},
 }
 
-const toolResultMaxBytes = 15000
+const toolResultMaxBytes = 60000
 
 // CallTool dispatches a tool call coming back from the LLM to the right client
 // (Jira or GitHub) and returns a JSON string suitable for the "tool" message content.
@@ -416,7 +504,8 @@ func CallTool(jc *JiraClient, gc *GitHubClient, name, argsJSON string) string {
 		"gh_list_issues", "gh_get_issue", "gh_create_issue", "gh_update_issue",
 		"gh_close_issue", "gh_comment_issue", "gh_search_issues",
 		"gh_list_pulls", "gh_get_pull", "gh_create_pull", "gh_merge_pull",
-		"gh_list_pr_files", "gh_review_pull":
+		"gh_list_pr_files", "gh_review_pull",
+		"gh_list_workflows", "gh_run_workflow", "gh_list_workflow_runs", "gh_get_workflow_run":
 		if gc == nil {
 			return errJSON("GitHub is not configured (set GITHUB_TOKEN)")
 		}
@@ -450,7 +539,11 @@ func callGitHub(gc *GitHubClient, name string, args map[string]any) (json.RawMes
 	case "gh_list_my_repos":
 		vis, _ := args["visibility"].(string)
 		sort, _ := args["sort"].(string)
-		return gc.ListMyRepos(vis, sort, intArg(args["per_page"]))
+		max := intArg(args["max_total"])
+		if max == 0 {
+			max = intArg(args["per_page"]) // backward-compat if model still passes per_page
+		}
+		return gc.ListMyRepos(vis, sort, max)
 	case "gh_get_repo":
 		return gc.GetRepo(owner, repo)
 	case "gh_search_repos":
@@ -504,6 +597,53 @@ func callGitHub(gc *GitHubClient, name string, args map[string]any) (json.RawMes
 		event, _ := args["event"].(string)
 		body, _ := args["body"].(string)
 		return gc.ReviewPull(owner, repo, number, event, body)
+	case "gh_list_workflows":
+		return gc.ListWorkflows(owner, repo)
+	case "gh_run_workflow":
+		wid := strOrIntArg(args["workflow_id"])
+		ref, _ := args["ref"].(string)
+		if ref == "" {
+			ref = "main"
+		}
+		if wid == "" {
+			return nil, fmt.Errorf("gh_run_workflow: workflow_id is required (numeric ID or filename like 'test.yml')")
+		}
+		inputs, _ := args["inputs"].(map[string]any)
+		return gc.RunWorkflow(owner, repo, wid, ref, inputs)
+	case "gh_list_workflow_runs":
+		wid := strOrIntArg(args["workflow_id"])
+		status, _ := args["status"].(string)
+		branch, _ := args["branch"].(string)
+		return gc.ListWorkflowRuns(owner, repo, wid, status, branch, intArg(args["per_page"]))
+	case "gh_get_workflow_run":
+		runID := intArg(args["run_id"])
+		return gc.GetWorkflowRun(owner, repo, runID)
+	case "gh_wait_for_workflow_run":
+		runID := intArg(args["run_id"])
+		timeout := intArg(args["timeout_sec"])
+		interval := intArg(args["interval_sec"])
+		raw, ok, err := gc.WaitForWorkflowRun(owner, repo, runID, timeout, interval)
+		if err != nil {
+			return nil, err
+		}
+		return wrapWaitResult(raw, ok), nil
+	case "gh_run_workflow_and_wait":
+		wid := strOrIntArg(args["workflow_id"])
+		ref, _ := args["ref"].(string)
+		if ref == "" {
+			ref = "main"
+		}
+		if wid == "" {
+			return nil, fmt.Errorf("gh_run_workflow_and_wait: workflow_id is required (numeric ID or filename like 'test.yml')")
+		}
+		inputs, _ := args["inputs"].(map[string]any)
+		timeout := intArg(args["timeout_sec"])
+		interval := intArg(args["interval_sec"])
+		raw, ok, err := gc.RunWorkflowAndWait(owner, repo, wid, ref, inputs, timeout, interval)
+		if err != nil {
+			return nil, err
+		}
+		return wrapWaitResult(raw, ok), nil
 	}
 	return nil, fmt.Errorf("unhandled github tool %q", name)
 }
@@ -521,6 +661,22 @@ func intArg(v any) int {
 		return n
 	}
 	return 0
+}
+
+// strOrIntArg accepts a value that may arrive as a string or a JSON number
+// (e.g. a workflow ID) and returns a string usable in a URL path.
+func strOrIntArg(v any) string {
+	switch n := v.(type) {
+	case string:
+		return n
+	case float64:
+		return fmt.Sprintf("%d", int64(n))
+	case int:
+		return fmt.Sprintf("%d", n)
+	case int64:
+		return fmt.Sprintf("%d", n)
+	}
+	return ""
 }
 
 // trimSearch reduces the noisy Jira search payload to fields the LLM needs.
@@ -624,6 +780,67 @@ func trimGitHub(name string, raw json.RawMessage) json.RawMessage {
 	case "gh_list_pulls":
 		return slimArray(raw, slimPull)
 
+
+	case "gh_list_workflows":
+		var payload struct {
+			TotalCount int              `json:"total_count"`
+			Workflows  []map[string]any `json:"workflows"`
+		}
+		if err := json.Unmarshal(raw, &payload); err != nil {
+			return raw
+		}
+		slim := make([]map[string]any, 0, len(payload.Workflows))
+		for _, w := range payload.Workflows {
+			slim = append(slim, map[string]any{
+				"id":       w["id"],
+				"name":     w["name"],
+				"path":     w["path"],
+				"state":    w["state"],
+				"html_url": w["html_url"],
+			})
+		}
+		b, _ := json.Marshal(map[string]any{"count": payload.TotalCount, "workflows": slim})
+		return b
+
+	case "gh_run_workflow":
+		// 204 No Content -> {}; surface a friendly confirmation instead.
+		b, _ := json.Marshal(map[string]any{"dispatched": true,
+			"note": "Workflow accepted. Use gh_list_workflow_runs to find the new run id."})
+		return b
+
+	case "gh_list_workflow_runs":
+		var payload struct {
+			TotalCount   int              `json:"total_count"`
+			WorkflowRuns []map[string]any `json:"workflow_runs"`
+		}
+		if err := json.Unmarshal(raw, &payload); err != nil {
+			return raw
+		}
+		slim := make([]map[string]any, 0, len(payload.WorkflowRuns))
+		for _, r := range payload.WorkflowRuns {
+			slim = append(slim, slimWorkflowRun(r))
+		}
+		b, _ := json.Marshal(map[string]any{
+			"total_count": payload.TotalCount, "returned": len(slim), "runs": slim})
+		return b
+
+	case "gh_get_workflow_run":
+		return jsonOrRaw(slimWorkflowRun(asMap(raw)), raw)
+
+	case "gh_wait_for_workflow_run", "gh_run_workflow_and_wait":
+		var w struct {
+			Completed bool            `json:"completed"`
+			Run       json.RawMessage `json:"run"`
+		}
+		if err := json.Unmarshal(raw, &w); err != nil {
+			return raw
+		}
+		out, _ := json.Marshal(map[string]any{
+			"completed": w.Completed,
+			"run":       slimWorkflowRun(asMap(w.Run)),
+		})
+		return out
+
 	case "gh_get_pull", "gh_create_pull":
 		return jsonOrRaw(slimPull(asMap(raw)), raw)
 
@@ -652,15 +869,15 @@ func slimRepo(m map[string]any) map[string]any {
 		return nil
 	}
 	return map[string]any{
-		"full_name":   m["full_name"],
-		"private":     m["private"],
-		"description": m["description"],
-		"language":    m["language"],
+		"full_name":      m["full_name"],
+		"private":        m["private"],
+		"description":    m["description"],
+		"language":       m["language"],
 		"default_branch": m["default_branch"],
-		"stargazers":  m["stargazers_count"],
-		"open_issues": m["open_issues_count"],
-		"updated_at":  m["updated_at"],
-		"html_url":    m["html_url"],
+		"stargazers":     m["stargazers_count"],
+		"open_issues":    m["open_issues_count"],
+		"updated_at":     m["updated_at"],
+		"html_url":       m["html_url"],
 	}
 }
 
@@ -728,6 +945,28 @@ func labelNames(v any) []string {
 	return out
 }
 
+func slimWorkflowRun(m map[string]any) map[string]any {
+	if m == nil {
+		return nil
+	}
+	return map[string]any{
+		"id":           m["id"],
+		"name":         m["name"],
+		"workflow_id":  m["workflow_id"],
+		"event":        m["event"],
+		"status":       m["status"],
+		"conclusion":   m["conclusion"],
+		"head_branch":  m["head_branch"],
+		"head_sha":     m["head_sha"],
+		"run_number":   m["run_number"],
+		"run_attempt":  m["run_attempt"],
+		"created_at":   m["created_at"],
+		"updated_at":   m["updated_at"],
+		"html_url":     m["html_url"],
+		"actor":        nested(m, "actor", "login"),
+	}
+}
+
 func slimArray(raw json.RawMessage, fn func(map[string]any) map[string]any) json.RawMessage {
 	var arr []map[string]any
 	if err := json.Unmarshal(raw, &arr); err != nil {
@@ -791,5 +1030,18 @@ func jsonOrRaw(v any, fallback json.RawMessage) json.RawMessage {
 	if err != nil {
 		return fallback
 	}
+	return b
+}
+
+// wrapWaitResult packages a workflow run plus a completed flag so the LLM
+// gets both pieces of info in a stable shape.
+func wrapWaitResult(run json.RawMessage, completed bool) json.RawMessage {
+	if len(run) == 0 {
+		run = json.RawMessage("null")
+	}
+	b, _ := json.Marshal(map[string]any{
+		"completed": completed,
+		"run":       json.RawMessage(run),
+	})
 	return b
 }

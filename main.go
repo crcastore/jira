@@ -26,6 +26,7 @@ Rules:
 - For GitHub, owner+repo are required for most tools. If the user only gives a repo name,
   ask for the owner unless it's obvious from context.
 - Keep replies short. Show keys/numbers, titles, and statuses in compact tables/lists.
+- When a tool returns a list, show every item it returned — do not summarize, truncate, or pick a few. If the count is large, present a compact table with all rows.
 - Confirm with the user before destructive or large-batch changes (merging PRs, closing many
   issues, transitioning across many tickets, etc.).`
 
