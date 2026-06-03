@@ -115,13 +115,244 @@ var ToolSchemas = []openai.Tool{
 		Description: "Return the authenticated user's profile (accountId, email, displayName).",
 		Parameters:  jsonschema.Definition{Type: jsonschema.Object, Properties: map[string]jsonschema.Definition{}},
 	}},
+
+	// ---------- GitHub ----------
+	{Type: openai.ToolTypeFunction, Function: &openai.FunctionDefinition{
+		Name:        "gh_me",
+		Description: "Return the authenticated GitHub user's profile (login, name, email).",
+		Parameters:  jsonschema.Definition{Type: jsonschema.Object, Properties: map[string]jsonschema.Definition{}},
+	}},
+	{Type: openai.ToolTypeFunction, Function: &openai.FunctionDefinition{
+		Name:        "gh_list_my_repos",
+		Description: "List repositories the authenticated GitHub user has access to.",
+		Parameters: jsonschema.Definition{
+			Type: jsonschema.Object,
+			Properties: map[string]jsonschema.Definition{
+				"visibility": {Type: jsonschema.String, Description: "all | public | private"},
+				"sort":       {Type: jsonschema.String, Description: "created | updated | pushed | full_name"},
+				"per_page":   {Type: jsonschema.Integer},
+			},
+		},
+	}},
+	{Type: openai.ToolTypeFunction, Function: &openai.FunctionDefinition{
+		Name:        "gh_get_repo",
+		Description: "Fetch a GitHub repository's metadata.",
+		Parameters: jsonschema.Definition{
+			Type: jsonschema.Object,
+			Properties: map[string]jsonschema.Definition{
+				"owner": {Type: jsonschema.String},
+				"repo":  {Type: jsonschema.String},
+			},
+			Required: []string{"owner", "repo"},
+		},
+	}},
+	{Type: openai.ToolTypeFunction, Function: &openai.FunctionDefinition{
+		Name:        "gh_search_repos",
+		Description: "Search GitHub repositories using the search syntax (e.g. 'topic:cli language:go stars:>500').",
+		Parameters: jsonschema.Definition{
+			Type: jsonschema.Object,
+			Properties: map[string]jsonschema.Definition{
+				"query":    {Type: jsonschema.String},
+				"per_page": {Type: jsonschema.Integer},
+			},
+			Required: []string{"query"},
+		},
+	}},
+	{Type: openai.ToolTypeFunction, Function: &openai.FunctionDefinition{
+		Name:        "gh_list_issues",
+		Description: "List issues in a GitHub repo. Note: includes pull requests too (GitHub treats PRs as issues).",
+		Parameters: jsonschema.Definition{
+			Type: jsonschema.Object,
+			Properties: map[string]jsonschema.Definition{
+				"owner":    {Type: jsonschema.String},
+				"repo":     {Type: jsonschema.String},
+				"state":    {Type: jsonschema.String, Description: "open | closed | all"},
+				"labels":   {Type: jsonschema.String, Description: "comma-separated label names"},
+				"assignee": {Type: jsonschema.String, Description: "GitHub login, or '*' for any, 'none' for none"},
+				"per_page": {Type: jsonschema.Integer},
+			},
+			Required: []string{"owner", "repo"},
+		},
+	}},
+	{Type: openai.ToolTypeFunction, Function: &openai.FunctionDefinition{
+		Name:        "gh_get_issue",
+		Description: "Fetch a single GitHub issue (or PR) by number.",
+		Parameters: jsonschema.Definition{
+			Type: jsonschema.Object,
+			Properties: map[string]jsonschema.Definition{
+				"owner":  {Type: jsonschema.String},
+				"repo":   {Type: jsonschema.String},
+				"number": {Type: jsonschema.Integer},
+			},
+			Required: []string{"owner", "repo", "number"},
+		},
+	}},
+	{Type: openai.ToolTypeFunction, Function: &openai.FunctionDefinition{
+		Name:        "gh_create_issue",
+		Description: "Create a new GitHub issue.",
+		Parameters: jsonschema.Definition{
+			Type: jsonschema.Object,
+			Properties: map[string]jsonschema.Definition{
+				"owner":     {Type: jsonschema.String},
+				"repo":      {Type: jsonschema.String},
+				"title":     {Type: jsonschema.String},
+				"body":      {Type: jsonschema.String},
+				"assignees": {Type: jsonschema.Array, Items: &jsonschema.Definition{Type: jsonschema.String}},
+				"labels":    {Type: jsonschema.Array, Items: &jsonschema.Definition{Type: jsonschema.String}},
+			},
+			Required: []string{"owner", "repo", "title"},
+		},
+	}},
+	{Type: openai.ToolTypeFunction, Function: &openai.FunctionDefinition{
+		Name:        "gh_update_issue",
+		Description: "Update fields on a GitHub issue (title, body, state, labels, assignees, milestone).",
+		Parameters: jsonschema.Definition{
+			Type: jsonschema.Object,
+			Properties: map[string]jsonschema.Definition{
+				"owner":  {Type: jsonschema.String},
+				"repo":   {Type: jsonschema.String},
+				"number": {Type: jsonschema.Integer},
+				"fields": {Type: jsonschema.Object, Description: "JSON object of fields to PATCH"},
+			},
+			Required: []string{"owner", "repo", "number", "fields"},
+		},
+	}},
+	{Type: openai.ToolTypeFunction, Function: &openai.FunctionDefinition{
+		Name:        "gh_close_issue",
+		Description: "Close a GitHub issue.",
+		Parameters: jsonschema.Definition{
+			Type: jsonschema.Object,
+			Properties: map[string]jsonschema.Definition{
+				"owner":  {Type: jsonschema.String},
+				"repo":   {Type: jsonschema.String},
+				"number": {Type: jsonschema.Integer},
+			},
+			Required: []string{"owner", "repo", "number"},
+		},
+	}},
+	{Type: openai.ToolTypeFunction, Function: &openai.FunctionDefinition{
+		Name:        "gh_comment_issue",
+		Description: "Comment on a GitHub issue or pull request (PRs share the issue comment endpoint).",
+		Parameters: jsonschema.Definition{
+			Type: jsonschema.Object,
+			Properties: map[string]jsonschema.Definition{
+				"owner":  {Type: jsonschema.String},
+				"repo":   {Type: jsonschema.String},
+				"number": {Type: jsonschema.Integer},
+				"body":   {Type: jsonschema.String},
+			},
+			Required: []string{"owner", "repo", "number", "body"},
+		},
+	}},
+	{Type: openai.ToolTypeFunction, Function: &openai.FunctionDefinition{
+		Name:        "gh_search_issues",
+		Description: "Search issues and PRs across GitHub (e.g. 'is:open is:pr author:@me archived:false').",
+		Parameters: jsonschema.Definition{
+			Type: jsonschema.Object,
+			Properties: map[string]jsonschema.Definition{
+				"query":    {Type: jsonschema.String},
+				"per_page": {Type: jsonschema.Integer},
+			},
+			Required: []string{"query"},
+		},
+	}},
+	{Type: openai.ToolTypeFunction, Function: &openai.FunctionDefinition{
+		Name:        "gh_list_pulls",
+		Description: "List pull requests in a GitHub repo.",
+		Parameters: jsonschema.Definition{
+			Type: jsonschema.Object,
+			Properties: map[string]jsonschema.Definition{
+				"owner":    {Type: jsonschema.String},
+				"repo":     {Type: jsonschema.String},
+				"state":    {Type: jsonschema.String, Description: "open | closed | all"},
+				"per_page": {Type: jsonschema.Integer},
+			},
+			Required: []string{"owner", "repo"},
+		},
+	}},
+	{Type: openai.ToolTypeFunction, Function: &openai.FunctionDefinition{
+		Name:        "gh_get_pull",
+		Description: "Fetch a single pull request.",
+		Parameters: jsonschema.Definition{
+			Type: jsonschema.Object,
+			Properties: map[string]jsonschema.Definition{
+				"owner":  {Type: jsonschema.String},
+				"repo":   {Type: jsonschema.String},
+				"number": {Type: jsonschema.Integer},
+			},
+			Required: []string{"owner", "repo", "number"},
+		},
+	}},
+	{Type: openai.ToolTypeFunction, Function: &openai.FunctionDefinition{
+		Name:        "gh_create_pull",
+		Description: "Open a new pull request. `head` is the source branch, `base` is the target.",
+		Parameters: jsonschema.Definition{
+			Type: jsonschema.Object,
+			Properties: map[string]jsonschema.Definition{
+				"owner": {Type: jsonschema.String},
+				"repo":  {Type: jsonschema.String},
+				"title": {Type: jsonschema.String},
+				"head":  {Type: jsonschema.String, Description: "branch (or fork:branch) to merge from"},
+				"base":  {Type: jsonschema.String, Description: "branch to merge into"},
+				"body":  {Type: jsonschema.String},
+				"draft": {Type: jsonschema.Boolean},
+			},
+			Required: []string{"owner", "repo", "title", "head", "base"},
+		},
+	}},
+	{Type: openai.ToolTypeFunction, Function: &openai.FunctionDefinition{
+		Name:        "gh_merge_pull",
+		Description: "Merge a pull request. Destructive — confirm with the user first.",
+		Parameters: jsonschema.Definition{
+			Type: jsonschema.Object,
+			Properties: map[string]jsonschema.Definition{
+				"owner":          {Type: jsonschema.String},
+				"repo":           {Type: jsonschema.String},
+				"number":         {Type: jsonschema.Integer},
+				"merge_method":   {Type: jsonschema.String, Description: "merge | squash | rebase"},
+				"commit_title":   {Type: jsonschema.String},
+				"commit_message": {Type: jsonschema.String},
+			},
+			Required: []string{"owner", "repo", "number"},
+		},
+	}},
+	{Type: openai.ToolTypeFunction, Function: &openai.FunctionDefinition{
+		Name:        "gh_list_pr_files",
+		Description: "List files changed in a pull request.",
+		Parameters: jsonschema.Definition{
+			Type: jsonschema.Object,
+			Properties: map[string]jsonschema.Definition{
+				"owner":    {Type: jsonschema.String},
+				"repo":     {Type: jsonschema.String},
+				"number":   {Type: jsonschema.Integer},
+				"per_page": {Type: jsonschema.Integer},
+			},
+			Required: []string{"owner", "repo", "number"},
+		},
+	}},
+	{Type: openai.ToolTypeFunction, Function: &openai.FunctionDefinition{
+		Name:        "gh_review_pull",
+		Description: "Submit a review on a pull request.",
+		Parameters: jsonschema.Definition{
+			Type: jsonschema.Object,
+			Properties: map[string]jsonschema.Definition{
+				"owner":  {Type: jsonschema.String},
+				"repo":   {Type: jsonschema.String},
+				"number": {Type: jsonschema.Integer},
+				"event":  {Type: jsonschema.String, Description: "APPROVE | REQUEST_CHANGES | COMMENT"},
+				"body":   {Type: jsonschema.String},
+			},
+			Required: []string{"owner", "repo", "number", "event"},
+		},
+	}},
 }
 
 const toolResultMaxBytes = 15000
 
-// CallTool dispatches a tool call coming back from the LLM to the JiraClient
-// and returns a JSON string suitable for the "tool" message content.
-func CallTool(jc *JiraClient, name, argsJSON string) string {
+// CallTool dispatches a tool call coming back from the LLM to the right client
+// (Jira or GitHub) and returns a JSON string suitable for the "tool" message content.
+// gc may be nil if no GitHub credentials are configured.
+func CallTool(jc *JiraClient, gc *GitHubClient, name, argsJSON string) string {
 	if argsJSON == "" {
 		argsJSON = "{}"
 	}
@@ -136,6 +367,7 @@ func CallTool(jc *JiraClient, name, argsJSON string) string {
 	)
 
 	switch name {
+	// ---------- Jira ----------
 	case "search_issues":
 		jql, _ := args["jql"].(string)
 		max := intArg(args["max_results"])
@@ -178,6 +410,21 @@ func CallTool(jc *JiraClient, name, argsJSON string) string {
 		raw, err = jc.ListProjects()
 	case "myself":
 		raw, err = jc.Myself()
+
+	// ---------- GitHub ----------
+	case "gh_me", "gh_list_my_repos", "gh_get_repo", "gh_search_repos",
+		"gh_list_issues", "gh_get_issue", "gh_create_issue", "gh_update_issue",
+		"gh_close_issue", "gh_comment_issue", "gh_search_issues",
+		"gh_list_pulls", "gh_get_pull", "gh_create_pull", "gh_merge_pull",
+		"gh_list_pr_files", "gh_review_pull":
+		if gc == nil {
+			return errJSON("GitHub is not configured (set GITHUB_TOKEN)")
+		}
+		raw, err = callGitHub(gc, name, args)
+		if err == nil {
+			raw = trimGitHub(name, raw)
+		}
+
 	default:
 		return errJSON(fmt.Sprintf("unknown tool '%s'", name))
 	}
@@ -190,6 +437,75 @@ func CallTool(jc *JiraClient, name, argsJSON string) string {
 		out = out[:toolResultMaxBytes]
 	}
 	return out
+}
+
+func callGitHub(gc *GitHubClient, name string, args map[string]any) (json.RawMessage, error) {
+	owner, _ := args["owner"].(string)
+	repo, _ := args["repo"].(string)
+	number := intArg(args["number"])
+
+	switch name {
+	case "gh_me":
+		return gc.Me()
+	case "gh_list_my_repos":
+		vis, _ := args["visibility"].(string)
+		sort, _ := args["sort"].(string)
+		return gc.ListMyRepos(vis, sort, intArg(args["per_page"]))
+	case "gh_get_repo":
+		return gc.GetRepo(owner, repo)
+	case "gh_search_repos":
+		q, _ := args["query"].(string)
+		return gc.SearchRepos(q, intArg(args["per_page"]))
+	case "gh_list_issues":
+		state, _ := args["state"].(string)
+		labels, _ := args["labels"].(string)
+		assignee, _ := args["assignee"].(string)
+		return gc.ListIssues(owner, repo, state, labels, assignee, intArg(args["per_page"]))
+	case "gh_get_issue":
+		return gc.GetIssue(owner, repo, number)
+	case "gh_create_issue":
+		var a GHCreateIssueArgs
+		b, _ := json.Marshal(args)
+		if err := json.Unmarshal(b, &a); err != nil {
+			return nil, fmt.Errorf("bad arguments for gh_create_issue: %w", err)
+		}
+		return gc.CreateIssue(a)
+	case "gh_update_issue":
+		fields, _ := args["fields"].(map[string]any)
+		return gc.UpdateIssue(owner, repo, number, fields)
+	case "gh_close_issue":
+		return gc.CloseIssue(owner, repo, number)
+	case "gh_comment_issue":
+		body, _ := args["body"].(string)
+		return gc.CommentIssue(owner, repo, number, body)
+	case "gh_search_issues":
+		q, _ := args["query"].(string)
+		return gc.SearchIssues(q, intArg(args["per_page"]))
+	case "gh_list_pulls":
+		state, _ := args["state"].(string)
+		return gc.ListPulls(owner, repo, state, intArg(args["per_page"]))
+	case "gh_get_pull":
+		return gc.GetPull(owner, repo, number)
+	case "gh_create_pull":
+		var a GHCreatePullArgs
+		b, _ := json.Marshal(args)
+		if err := json.Unmarshal(b, &a); err != nil {
+			return nil, fmt.Errorf("bad arguments for gh_create_pull: %w", err)
+		}
+		return gc.CreatePull(a)
+	case "gh_merge_pull":
+		method, _ := args["merge_method"].(string)
+		title, _ := args["commit_title"].(string)
+		msg, _ := args["commit_message"].(string)
+		return gc.MergePull(owner, repo, number, method, title, msg)
+	case "gh_list_pr_files":
+		return gc.ListPullFiles(owner, repo, number, intArg(args["per_page"]))
+	case "gh_review_pull":
+		event, _ := args["event"].(string)
+		body, _ := args["body"].(string)
+		return gc.ReviewPull(owner, repo, number, event, body)
+	}
+	return nil, fmt.Errorf("unhandled github tool %q", name)
 }
 
 func errJSON(msg string) string {
@@ -275,4 +591,205 @@ func nested(m map[string]any, k1, k2 string) any {
 		return nil
 	}
 	return inner[k2]
+}
+
+// trimGitHub reduces noisy GitHub payloads to the fields the LLM actually needs,
+// so list responses don't get truncated to 2-3 entries by toolResultMaxBytes.
+func trimGitHub(name string, raw json.RawMessage) json.RawMessage {
+	switch name {
+	case "gh_me":
+		return pickFields(raw, "login", "id", "name", "email", "html_url", "company", "bio")
+
+	case "gh_list_my_repos":
+		return slimArray(raw, slimRepo)
+
+	case "gh_get_repo":
+		return jsonOrRaw(slimRepo(asMap(raw)), raw)
+
+	case "gh_search_repos":
+		return slimSearchItems(raw, slimRepo)
+
+	case "gh_list_issues":
+		return slimArray(raw, slimIssue)
+
+	case "gh_get_issue", "gh_create_issue", "gh_update_issue", "gh_close_issue":
+		return jsonOrRaw(slimIssue(asMap(raw)), raw)
+
+	case "gh_comment_issue":
+		return pickFields(raw, "id", "html_url", "user", "body", "created_at")
+
+	case "gh_search_issues":
+		return slimSearchItems(raw, slimIssue)
+
+	case "gh_list_pulls":
+		return slimArray(raw, slimPull)
+
+	case "gh_get_pull", "gh_create_pull":
+		return jsonOrRaw(slimPull(asMap(raw)), raw)
+
+	case "gh_merge_pull":
+		return pickFields(raw, "sha", "merged", "message")
+
+	case "gh_list_pr_files":
+		return slimArray(raw, func(m map[string]any) map[string]any {
+			return map[string]any{
+				"filename":  m["filename"],
+				"status":    m["status"],
+				"additions": m["additions"],
+				"deletions": m["deletions"],
+				"changes":   m["changes"],
+			}
+		})
+
+	case "gh_review_pull":
+		return pickFields(raw, "id", "state", "html_url", "body", "submitted_at")
+	}
+	return raw
+}
+
+func slimRepo(m map[string]any) map[string]any {
+	if m == nil {
+		return nil
+	}
+	return map[string]any{
+		"full_name":   m["full_name"],
+		"private":     m["private"],
+		"description": m["description"],
+		"language":    m["language"],
+		"default_branch": m["default_branch"],
+		"stargazers":  m["stargazers_count"],
+		"open_issues": m["open_issues_count"],
+		"updated_at":  m["updated_at"],
+		"html_url":    m["html_url"],
+	}
+}
+
+func slimIssue(m map[string]any) map[string]any {
+	if m == nil {
+		return nil
+	}
+	out := map[string]any{
+		"number":     m["number"],
+		"title":      m["title"],
+		"state":      m["state"],
+		"user":       nested(m, "user", "login"),
+		"assignee":   nested(m, "assignee", "login"),
+		"labels":     labelNames(m["labels"]),
+		"comments":   m["comments"],
+		"created_at": m["created_at"],
+		"updated_at": m["updated_at"],
+		"html_url":   m["html_url"],
+	}
+	if repo, ok := m["repository"].(map[string]any); ok {
+		out["repo"] = repo["full_name"]
+	}
+	if _, isPR := m["pull_request"]; isPR {
+		out["is_pr"] = true
+	}
+	return out
+}
+
+func slimPull(m map[string]any) map[string]any {
+	if m == nil {
+		return nil
+	}
+	return map[string]any{
+		"number":     m["number"],
+		"title":      m["title"],
+		"state":      m["state"],
+		"draft":      m["draft"],
+		"user":       nested(m, "user", "login"),
+		"head":       nested(m, "head", "ref"),
+		"base":       nested(m, "base", "ref"),
+		"merged":     m["merged"],
+		"mergeable":  m["mergeable"],
+		"additions":  m["additions"],
+		"deletions":  m["deletions"],
+		"changed_files": m["changed_files"],
+		"created_at": m["created_at"],
+		"updated_at": m["updated_at"],
+		"html_url":   m["html_url"],
+	}
+}
+
+func labelNames(v any) []string {
+	arr, ok := v.([]any)
+	if !ok {
+		return nil
+	}
+	out := make([]string, 0, len(arr))
+	for _, l := range arr {
+		if m, ok := l.(map[string]any); ok {
+			if name, ok := m["name"].(string); ok {
+				out = append(out, name)
+			}
+		}
+	}
+	return out
+}
+
+func slimArray(raw json.RawMessage, fn func(map[string]any) map[string]any) json.RawMessage {
+	var arr []map[string]any
+	if err := json.Unmarshal(raw, &arr); err != nil {
+		return raw
+	}
+	slim := make([]map[string]any, 0, len(arr))
+	for _, m := range arr {
+		slim = append(slim, fn(m))
+	}
+	b, _ := json.Marshal(map[string]any{"count": len(slim), "items": slim})
+	return b
+}
+
+func slimSearchItems(raw json.RawMessage, fn func(map[string]any) map[string]any) json.RawMessage {
+	var payload struct {
+		TotalCount        int              `json:"total_count"`
+		IncompleteResults bool             `json:"incomplete_results"`
+		Items             []map[string]any `json:"items"`
+	}
+	if err := json.Unmarshal(raw, &payload); err != nil {
+		return raw
+	}
+	slim := make([]map[string]any, 0, len(payload.Items))
+	for _, m := range payload.Items {
+		slim = append(slim, fn(m))
+	}
+	b, _ := json.Marshal(map[string]any{
+		"total_count":        payload.TotalCount,
+		"incomplete_results": payload.IncompleteResults,
+		"returned":           len(slim),
+		"items":              slim,
+	})
+	return b
+}
+
+func pickFields(raw json.RawMessage, keys ...string) json.RawMessage {
+	m := asMap(raw)
+	if m == nil {
+		return raw
+	}
+	out := make(map[string]any, len(keys))
+	for _, k := range keys {
+		if v, ok := m[k]; ok {
+			out[k] = v
+		}
+	}
+	b, _ := json.Marshal(out)
+	return b
+}
+
+func asMap(raw json.RawMessage) map[string]any {
+	var m map[string]any
+	if err := json.Unmarshal(raw, &m); err != nil {
+		return nil
+	}
+	return m
+}
+
+func jsonOrRaw(v any, fallback json.RawMessage) json.RawMessage {
+	b, err := json.Marshal(v)
+	if err != nil {
+		return fallback
+	}
+	return b
 }

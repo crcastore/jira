@@ -1,7 +1,7 @@
-# Jira Agent (Go)
+# Jira + GitHub Agent (Go)
 
-CLI agent that talks to **Jira Cloud** in natural language. The LLM is any
-OpenAI-compatible endpoint, so you can plug in:
+CLI agent that talks to **Jira Cloud** and **GitHub** in natural language. The
+LLM is any OpenAI-compatible endpoint, so you can plug in:
 
 - **Ollama** (local, free) — e.g. `llama3.1`, `qwen2.5` (needs a tool-calling model)
 - **OpenAI** (`gpt-4o-mini`, etc.)
@@ -25,6 +25,11 @@ JIRA_BASE_URL=https://your-domain.atlassian.net
 JIRA_EMAIL=you@example.com
 JIRA_API_TOKEN=...
 
+# Optional — enables the gh_* tools. Classic token with `repo` scope,
+# or fine-grained with Issues + Pull requests read/write.
+GITHUB_TOKEN=ghp_...
+# GITHUB_API_URL=https://github.example.com/api/v3   # GHES only
+
 # Defaults to local Ollama:
 LLM_BASE_URL=http://localhost:11434/v1
 LLM_API_KEY=ollama
@@ -42,11 +47,7 @@ Get a Jira API token: <https://id.atlassian.com/manage-profile/security/api-toke
 
 ```bash
 ollama serve
-ollama pull llama3.1
-```
-
-## Example prompts
-
+Jira:
 - `what issues are assigned to me and not done?`
 - `show me ABC-123`
 - `comment on ABC-123 saying "merged, ready for QA"`
@@ -54,9 +55,19 @@ ollama pull llama3.1
 - `create a Bug in project ABC titled "Login button misaligned on Safari"`
 - `assign ABC-123 to Maria Lopez`
 
-## Tools exposed to the LLM
+GitHub:
+- `list my open PRs across all repos`
+- `show me PR #42 in owner/repo and the files it touches`
+- `open a PR from feature/foo into main on owner/repo titled "Add foo"`
+- `comment on issue #17 in owner/repo: "looking into this today"`
+- `approve PR #42 in owner/repo with body "LGTM"`
+- `close issue #5 in owner/repoe and not done?`
+- `show me ABC-123`
+- `comment on ABC-123 saying "merged, ready for QA"`
+- `move ABC-123 to In Review`
+- `create a Bug in proje.
 
-See [tools.go](tools.go):
+**Jira**
 
 | Tool | Purpose |
 | --- | --- |
@@ -69,7 +80,26 @@ See [tools.go](tools.go):
 | `search_users` | Resolve a name/email to an accountId |
 | `list_projects`, `myself` | Discovery |
 
+**GitHub** (enabled when `GITHUB_TOKEN` is set)
+
+| Tool | Purpose |
+| --- | --- |
+| `gh_me` | Authenticated GitHub user |
+| `gh_list_my_repos` / `gh_get_repo` / `gh_search_repos` | Repository discovery |
+| `gh_list_issues` / `gh_get_issue` | Read issues |
+| `gh_create_issue` / `gh_update_issue` / `gh_close_issue` | Write issues |
+| `gh_comment_issue` | Comment on an issue or PR |
+| `gh_search_issues` | Global issue/PR search syntax |
+| `gh_list_pulls` / `gh_get_pull` / `gh_list_pr_files` | Read PRs |
+| `gh_create_pull` / `gh_merge_pull` / `gh_review_pull` | Write PRs |
+
 ## Files
+
+| File | Purpose |
+| --- | --- |
+| [main.go](main.go) | CLI loop, LLM wiring, tool-call dispatch |
+| [jira.go](jira.go) | Jira Cloud REST v3 client |
+| [github.go](github.go) | GitHub REST v3 client
 
 | File | Purpose |
 | --- | --- |
