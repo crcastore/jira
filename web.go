@@ -21,6 +21,7 @@ import (
 type webApp struct {
 	client   *openai.Client
 	model    string
+	baseURL  string
 	llmTimeout time.Duration
 	jc       *JiraClient
 	gc       *GitHubClient
@@ -75,6 +76,7 @@ func serveWeb() {
 	app := &webApp{
 		client:   openai.NewClientWithConfig(cfg),
 		model:    model,
+		baseURL:  baseURL,
 		llmTimeout: time.Duration(llmTimeoutSec) * time.Second,
 		jc:       jc,
 		gc:       gc,
@@ -104,9 +106,12 @@ func (a *webApp) handleIndex(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	_, _ = a.ensureSession(r, w)
+	models, modelsErr := a.fetchOllamaModels()
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
 	_ = pageTmpl.Execute(w, map[string]any{
 		"Model":       a.model,
+		"Models":      models,
+		"ModelsErr":   errString(modelsErr),
 		"GitHubReady": a.gc != nil,
 	})
 }
@@ -142,12 +147,20 @@ func (a *webApp) handleChat(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	prompt := strings.TrimSpace(r.FormValue("prompt"))
+	model := strings.TrimSpace(r.FormValue("model"))
+	if model == "" {
+		model = a.model
+	}
+	models, _ := a.fetchOllamaModels()
+	if len(models) > 0 && !containsString(models, model) {
+		model = a.model
+	}
 	if prompt == "" {
 		http.Error(w, "prompt required", http.StatusBadRequest)
 		return
 	}
 
-	assistant, events, err := a.runAgentTurn(sid, prompt)
+	assistant, events, err := a.runAgentTurn(sid, prompt, model)
 	if err != nil {
 		assistant = "Error: " + err.Error()
 	}
@@ -160,11 +173,14 @@ func (a *webApp) handleChat(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
-func (a *webApp) runAgentTurn(sessionID, prompt string) (string, []toolEvent, error) {
+func (a *webApp) runAgentTurn(sessionID, prompt, model string) (string, []toolEvent, error) {
 	messages := a.getSessionMessages(sessionID)
 	messages = append(messages, openai.ChatCompletionMessage{Role: openai.ChatMessageRoleUser, Content: prompt})
 	events := make([]toolEvent, 0)
 	assistantText := ""
+	if strings.TrimSpace(model) == "" {
+		model = a.model
+	}
 
 	for step := 0; step < maxSteps; step++ {
 		ctx := context.Background()
@@ -173,7 +189,7 @@ func (a *webApp) runAgentTurn(sessionID, prompt string) (string, []toolEvent, er
 			ctx, cancel = context.WithTimeout(ctx, a.llmTimeout)
 		}
 		resp, err := a.client.CreateChatCompletion(ctx, openai.ChatCompletionRequest{
-			Model:      a.model,
+			Model:      model,
 			Messages:   messages,
 			Tools:      ToolSchemas,
 			ToolChoice: "auto",
@@ -372,6 +388,75 @@ func envOrInt(k string, def int) int {
 	return n
 }
 
+func containsString(values []string, want string) bool {
+	for _, value := range values {
+		if value == want {
+			return true
+		}
+	}
+	return false
+}
+
+func (a *webApp) fetchOllamaModels() ([]string, error) {
+	base := strings.TrimRight(a.baseURL, "/")
+	base = strings.TrimSuffix(base, "/v1")
+	if base == "" {
+		return nil, fmt.Errorf("LLM_BASE_URL is empty")
+	}
+
+	req, err := http.NewRequest(http.MethodGet, base+"/api/tags", nil)
+	if err != nil {
+		return nil, err
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	req = req.WithContext(ctx)
+
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode >= 400 {
+		return nil, fmt.Errorf("ollama tags request failed: %s", resp.Status)
+	}
+
+	var payload struct {
+		Models []struct {
+			Name         string   `json:"name"`
+			Capabilities []string `json:"capabilities"`
+		} `json:"models"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&payload); err != nil {
+		return nil, err
+	}
+
+	names := make([]string, 0, len(payload.Models))
+	for _, m := range payload.Models {
+		if m.Name == "" {
+			continue
+		}
+		if len(m.Capabilities) > 0 {
+			hasCompletion := false
+			hasTools := false
+			for _, cap := range m.Capabilities {
+				if cap == "completion" {
+					hasCompletion = true
+				}
+				if cap == "tools" {
+					hasTools = true
+				}
+			}
+			if !hasCompletion || !hasTools {
+				continue
+			}
+		}
+		names = append(names, m.Name)
+	}
+	sort.Strings(names)
+	return names, nil
+}
+
 var pageTmpl = template.Must(template.New("page").Parse(`<!doctype html>
 <html lang="en">
 <head>
@@ -472,11 +557,20 @@ var pageTmpl = template.Must(template.New("page").Parse(`<!doctype html>
     }
     form {
       display: grid;
-      grid-template-columns: 1fr auto;
+			grid-template-columns: auto 1fr auto;
       gap: 10px;
       padding: 12px;
       border-top: 1px solid var(--border);
     }
+		select {
+			border: 1px solid var(--border);
+			border-radius: 10px;
+			padding: 10px 12px;
+			font-size: 14px;
+			background: #fff;
+			color: var(--ink);
+			min-width: 180px;
+		}
     input[type="text"] {
       width: 100%;
       border: 1px solid var(--border);
@@ -547,10 +641,20 @@ var pageTmpl = template.Must(template.New("page").Parse(`<!doctype html>
         <div class="bubble assistant">Ask anything about your Jira tickets or GitHub work.</div>
       </div>
 
-      <form id="chat-form" hx-post="/chat" hx-target="#chat-log" hx-swap="beforeend">
+			<form id="chat-form" hx-post="/chat" hx-target="#chat-log" hx-swap="beforeend">
+				<select name="model" aria-label="Model">
+					{{if .Models}}
+						{{range .Models}}
+							<option value="{{.}}" {{if eq . $.Model}}selected{{end}}>{{.}}</option>
+						{{end}}
+					{{else}}
+						<option value="{{.Model}}" selected>{{.Model}}</option>
+					{{end}}
+				</select>
         <input name="prompt" type="text" placeholder="Ask the agent something..." autocomplete="off" required>
         <button type="submit">Send</button>
       </form>
+			{{if .ModelsErr}}<div class="tiny" style="padding: 0 12px 12px;">Model list unavailable: {{.ModelsErr}}</div>{{end}}
     </section>
 
     <aside class="side">
