@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os"
 	"strings"
+	"time"
 
 	openai "github.com/sashabaranov/go-openai"
 )
@@ -27,12 +28,25 @@ Rules:
   ask for the owner unless it's obvious from context.
 - Keep replies short. Show keys/numbers, titles, and statuses in compact tables/lists.
 - When a tool returns a list, show every item it returned — do not summarize, truncate, or pick a few. If the count is large, present a compact table with all rows.
+- GitHub Actions: if the user wants the *result* of a workflow (asks to "run and tell me the result", "kick it off and wait", "run and report back", etc.), call gh_run_workflow_and_wait — do NOT use gh_run_workflow followed by polling. If they ask about an already-running run, use gh_wait_for_workflow_run with its run_id. Only use gh_run_workflow when the user explicitly says "just kick it off" / "fire and forget".
 - Confirm with the user before destructive or large-batch changes (merging PRs, closing many
   issues, transitioning across many tickets, etc.).`
 
 const maxSteps = 12
 
 func main() {
+	if len(os.Args) > 1 {
+		switch strings.ToLower(os.Args[1]) {
+		case "serve", "web":
+			serveWeb()
+			return
+		}
+	}
+
+	runCLI()
+}
+
+func runCLI() {
 	loadDotEnv(".env")
 
 	jc, err := NewJiraClient()
@@ -48,7 +62,7 @@ func main() {
 
 	baseURL := envOr("LLM_BASE_URL", "http://localhost:11434/v1")
 	apiKey := firstNonEmpty(os.Getenv("LLM_API_KEY"), os.Getenv("OPENAI_API_KEY"), "ollama")
-	model := envOr("LLM_MODEL", "llama3.1")
+	model := envOr("LLM_MODEL", "llama3.1:8b")
 
 	cfg := openai.DefaultConfig(apiKey)
 	cfg.BaseURL = baseURL
@@ -89,12 +103,14 @@ func main() {
 func runTurn(client *openai.Client, model string, messages []openai.ChatCompletionMessage, jc *JiraClient, gc *GitHubClient) []openai.ChatCompletionMessage {
 	ctx := context.Background()
 	for step := 0; step < maxSteps; step++ {
+		stopSpinner := startSpinner("thinking")
 		resp, err := client.CreateChatCompletion(ctx, openai.ChatCompletionRequest{
 			Model:      model,
 			Messages:   messages,
 			Tools:      ToolSchemas,
 			ToolChoice: "auto",
 		})
+		stopSpinner()
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "LLM error: %v\n", err)
 			return messages
@@ -130,6 +146,42 @@ func runTurn(client *openai.Client, model string, messages []openai.ChatCompleti
 	}
 	fmt.Println("Step limit reached.")
 	return messages
+}
+
+// startSpinner prints an animated indicator with elapsed seconds until the
+// returned stop function is called. Output goes to stderr so it doesn't get
+// mixed into captured stdout.
+func startSpinner(label string) func() {
+	if !isTerminal(os.Stderr) {
+		return func() {}
+	}
+	done := make(chan struct{})
+	go func() {
+		frames := []rune{'⠋', '⠙', '⠹', '⠸', '⠼', '⠴', '⠦', '⠧', '⠇', '⠏'}
+		start := time.Now()
+		i := 0
+		t := time.NewTicker(120 * time.Millisecond)
+		defer t.Stop()
+		for {
+			select {
+			case <-done:
+				fmt.Fprint(os.Stderr, "\r\033[K")
+				return
+			case <-t.C:
+				fmt.Fprintf(os.Stderr, "\r\033[2m%c %s… %ds\033[0m", frames[i%len(frames)], label, int(time.Since(start).Seconds()))
+				i++
+			}
+		}
+	}()
+	return func() { close(done) }
+}
+
+func isTerminal(f *os.File) bool {
+	fi, err := f.Stat()
+	if err != nil {
+		return false
+	}
+	return (fi.Mode() & os.ModeCharDevice) != 0
 }
 
 // ---------- env helpers ----------

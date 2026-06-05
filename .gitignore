@@ -1,3 +1,6 @@
 .env
 .DS_Store
 jira-agent
+ve/
+__pycache__/
+*.pyc

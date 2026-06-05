@@ -1,0 +1,646 @@
+package main
+
+import (
+	"context"
+	"crypto/rand"
+	"encoding/hex"
+	"encoding/json"
+	"fmt"
+	"html/template"
+	"net/http"
+	"os"
+	"sort"
+	"strconv"
+	"strings"
+	"sync"
+	"time"
+
+	openai "github.com/sashabaranov/go-openai"
+)
+
+type webApp struct {
+	client   *openai.Client
+	model    string
+	llmTimeout time.Duration
+	jc       *JiraClient
+	gc       *GitHubClient
+	sessions map[string][]openai.ChatCompletionMessage
+	mu       sync.Mutex
+}
+
+type repoItem struct {
+	FullName string
+	URL      string
+	Updated  string
+	Private  bool
+}
+
+type jiraIssueItem struct {
+	Key      string
+	Summary  string
+	Status   string
+	Assignee string
+	Updated  string
+}
+
+type toolEvent struct {
+	Name   string
+	Args   string
+	Result string
+}
+
+func serveWeb() {
+	loadDotEnv(".env")
+
+	jc, err := NewJiraClient()
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "%v. Copy .env.example to .env and fill it in.\n", err)
+		os.Exit(1)
+	}
+
+	gc, gerr := NewGitHubClient()
+	if gerr != nil {
+		fmt.Fprintf(os.Stderr, "GitHub panel disabled: %v\n", gerr)
+	}
+
+	baseURL := envOr("LLM_BASE_URL", "http://localhost:11434/v1")
+	apiKey := firstNonEmpty(os.Getenv("LLM_API_KEY"), os.Getenv("OPENAI_API_KEY"), "ollama")
+	model := envOr("LLM_MODEL", "llama3.1:8b")
+	llmTimeoutSec := envOrInt("WEB_LLM_TIMEOUT_SEC", 180)
+	addr := envOr("WEB_ADDR", ":8080")
+
+	cfg := openai.DefaultConfig(apiKey)
+	cfg.BaseURL = baseURL
+
+	app := &webApp{
+		client:   openai.NewClientWithConfig(cfg),
+		model:    model,
+		llmTimeout: time.Duration(llmTimeoutSec) * time.Second,
+		jc:       jc,
+		gc:       gc,
+		sessions: map[string][]openai.ChatCompletionMessage{},
+	}
+
+	mux := http.NewServeMux()
+	mux.HandleFunc("/", app.handleIndex)
+	mux.HandleFunc("/chat", app.handleChat)
+	mux.HandleFunc("/partials/repos", app.handleRepos)
+	mux.HandleFunc("/partials/jira-issues", app.handleJiraIssues)
+	mux.HandleFunc("/healthz", func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "text/plain; charset=utf-8")
+		_, _ = w.Write([]byte("ok"))
+	})
+
+	fmt.Printf("Web UI running on http://localhost%s\n", addr)
+	if err := http.ListenAndServe(addr, mux); err != nil {
+		fmt.Fprintf(os.Stderr, "web server error: %v\n", err)
+		os.Exit(1)
+	}
+}
+
+func (a *webApp) handleIndex(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	_, _ = a.ensureSession(r, w)
+	w.Header().Set("Content-Type", "text/html; charset=utf-8")
+	_ = pageTmpl.Execute(w, map[string]any{
+		"Model":       a.model,
+		"GitHubReady": a.gc != nil,
+	})
+}
+
+func (a *webApp) handleRepos(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	w.Header().Set("Content-Type", "text/html; charset=utf-8")
+	repos, err := a.fetchRepos()
+	_ = reposTmpl.Execute(w, map[string]any{"Repos": repos, "Err": errString(err)})
+}
+
+func (a *webApp) handleJiraIssues(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	w.Header().Set("Content-Type", "text/html; charset=utf-8")
+	issues, err := a.fetchJiraIssues()
+	_ = issuesTmpl.Execute(w, map[string]any{"Issues": issues, "Err": errString(err)})
+}
+
+func (a *webApp) handleChat(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	sid, _ := a.ensureSession(r, w)
+	if err := r.ParseForm(); err != nil {
+		http.Error(w, "invalid form", http.StatusBadRequest)
+		return
+	}
+	prompt := strings.TrimSpace(r.FormValue("prompt"))
+	if prompt == "" {
+		http.Error(w, "prompt required", http.StatusBadRequest)
+		return
+	}
+
+	assistant, events, err := a.runAgentTurn(sid, prompt)
+	if err != nil {
+		assistant = "Error: " + err.Error()
+	}
+
+	w.Header().Set("Content-Type", "text/html; charset=utf-8")
+	_ = chatChunkTmpl.Execute(w, map[string]any{
+		"Prompt":    prompt,
+		"Assistant": assistant,
+		"Events":    events,
+	})
+}
+
+func (a *webApp) runAgentTurn(sessionID, prompt string) (string, []toolEvent, error) {
+	messages := a.getSessionMessages(sessionID)
+	messages = append(messages, openai.ChatCompletionMessage{Role: openai.ChatMessageRoleUser, Content: prompt})
+	events := make([]toolEvent, 0)
+	assistantText := ""
+
+	for step := 0; step < maxSteps; step++ {
+		ctx := context.Background()
+		cancel := func() {}
+		if a.llmTimeout > 0 {
+			ctx, cancel = context.WithTimeout(ctx, a.llmTimeout)
+		}
+		resp, err := a.client.CreateChatCompletion(ctx, openai.ChatCompletionRequest{
+			Model:      a.model,
+			Messages:   messages,
+			Tools:      ToolSchemas,
+			ToolChoice: "auto",
+		})
+		cancel()
+		if err != nil {
+			a.setSessionMessages(sessionID, messages)
+			return assistantText, events, err
+		}
+		msg := resp.Choices[0].Message
+		messages = append(messages, openai.ChatCompletionMessage{
+			Role:      openai.ChatMessageRoleAssistant,
+			Content:   msg.Content,
+			ToolCalls: msg.ToolCalls,
+		})
+		assistantText = strings.TrimSpace(msg.Content)
+
+		if len(msg.ToolCalls) == 0 {
+			if assistantText == "" {
+				assistantText = "Done."
+			}
+			a.setSessionMessages(sessionID, messages)
+			return assistantText, events, nil
+		}
+
+		for _, tc := range msg.ToolCalls {
+			args := tc.Function.Arguments
+			if strings.TrimSpace(args) == "" {
+				args = "{}"
+			}
+			result := CallTool(a.jc, a.gc, tc.Function.Name, args)
+			events = append(events, toolEvent{Name: tc.Function.Name, Args: args, Result: result})
+			messages = append(messages, openai.ChatCompletionMessage{
+				Role:       openai.ChatMessageRoleTool,
+				ToolCallID: tc.ID,
+				Name:       tc.Function.Name,
+				Content:    result,
+			})
+		}
+	}
+
+	a.setSessionMessages(sessionID, messages)
+	if assistantText == "" {
+		assistantText = "Step limit reached."
+	}
+	return assistantText, events, nil
+}
+
+func (a *webApp) fetchRepos() ([]repoItem, error) {
+	if a.gc == nil {
+		return nil, fmt.Errorf("GITHUB_TOKEN not set")
+	}
+	raw, err := a.gc.ListMyRepos("", "updated", 150)
+	if err != nil {
+		return nil, err
+	}
+	var repos []struct {
+		FullName string `json:"full_name"`
+		HTMLURL  string `json:"html_url"`
+		Updated  string `json:"updated_at"`
+		Private  bool   `json:"private"`
+	}
+	if err := json.Unmarshal(raw, &repos); err != nil {
+		return nil, err
+	}
+	items := make([]repoItem, 0, len(repos))
+	for _, r := range repos {
+		items = append(items, repoItem{
+			FullName: r.FullName,
+			URL:      r.HTMLURL,
+			Updated:  trimISODate(r.Updated),
+			Private:  r.Private,
+		})
+	}
+	sort.Slice(items, func(i, j int) bool { return items[i].Updated > items[j].Updated })
+	if len(items) > 40 {
+		items = items[:40]
+	}
+	return items, nil
+}
+
+func (a *webApp) fetchJiraIssues() ([]jiraIssueItem, error) {
+	raw, err := a.jc.Search(
+		"assignee = currentUser() AND statusCategory != Done ORDER BY updated DESC",
+		[]string{"summary", "status", "assignee", "updated"},
+		40,
+	)
+	if err != nil {
+		return nil, err
+	}
+
+	var payload struct {
+		Issues []struct {
+			Key    string `json:"key"`
+			Fields struct {
+				Summary string `json:"summary"`
+				Updated string `json:"updated"`
+				Status  struct {
+					Name string `json:"name"`
+				} `json:"status"`
+				Assignee struct {
+					DisplayName string `json:"displayName"`
+				} `json:"assignee"`
+			} `json:"fields"`
+		} `json:"issues"`
+	}
+	if err := json.Unmarshal(raw, &payload); err != nil {
+		return nil, err
+	}
+	items := make([]jiraIssueItem, 0, len(payload.Issues))
+	for _, it := range payload.Issues {
+		assignee := it.Fields.Assignee.DisplayName
+		if assignee == "" {
+			assignee = "Unassigned"
+		}
+		items = append(items, jiraIssueItem{
+			Key:      it.Key,
+			Summary:  it.Fields.Summary,
+			Status:   it.Fields.Status.Name,
+			Assignee: assignee,
+			Updated:  trimISODate(it.Fields.Updated),
+		})
+	}
+	return items, nil
+}
+
+func (a *webApp) getSessionMessages(sessionID string) []openai.ChatCompletionMessage {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	if msgs, ok := a.sessions[sessionID]; ok {
+		return append([]openai.ChatCompletionMessage(nil), msgs...)
+	}
+	msgs := []openai.ChatCompletionMessage{{Role: openai.ChatMessageRoleSystem, Content: systemPrompt}}
+	a.sessions[sessionID] = msgs
+	return append([]openai.ChatCompletionMessage(nil), msgs...)
+}
+
+func (a *webApp) setSessionMessages(sessionID string, msgs []openai.ChatCompletionMessage) {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	a.sessions[sessionID] = append([]openai.ChatCompletionMessage(nil), msgs...)
+}
+
+func (a *webApp) ensureSession(r *http.Request, w http.ResponseWriter) (string, error) {
+	if c, err := r.Cookie("jira_agent_sid"); err == nil && c.Value != "" {
+		return c.Value, nil
+	}
+	id, err := randomHex(16)
+	if err != nil {
+		return "", err
+	}
+	http.SetCookie(w, &http.Cookie{
+		Name:     "jira_agent_sid",
+		Value:    id,
+		Path:     "/",
+		HttpOnly: true,
+		SameSite: http.SameSiteLaxMode,
+	})
+	return id, nil
+}
+
+func randomHex(n int) (string, error) {
+	b := make([]byte, n)
+	if _, err := rand.Read(b); err != nil {
+		return "", err
+	}
+	return hex.EncodeToString(b), nil
+}
+
+func trimISODate(s string) string {
+	if len(s) >= 10 {
+		return s[:10]
+	}
+	return s
+}
+
+func errString(err error) string {
+	if err == nil {
+		return ""
+	}
+	return err.Error()
+}
+
+func envOrInt(k string, def int) int {
+	v := strings.TrimSpace(os.Getenv(k))
+	if v == "" {
+		return def
+	}
+	n, err := strconv.Atoi(v)
+	if err != nil {
+		return def
+	}
+	if n < 0 {
+		return def
+	}
+	return n
+}
+
+var pageTmpl = template.Must(template.New("page").Parse(`<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Jira + GitHub Agent</title>
+  <script src="https://unpkg.com/htmx.org@1.9.12"></script>
+  <style>
+    :root {
+      --bg: #f6f7f4;
+      --panel: #ffffff;
+      --ink: #1f2937;
+      --muted: #6b7280;
+      --border: #d1d5db;
+      --accent: #115e59;
+      --accent-2: #0f766e;
+      --bubble-user: #d1fae5;
+      --bubble-assistant: #fff7ed;
+      --error: #9f1239;
+    }
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      font-family: "SF Pro Text", "Segoe UI", sans-serif;
+      color: var(--ink);
+      background: radial-gradient(circle at 15% 0%, #e0f2fe 0%, transparent 40%), var(--bg);
+    }
+    .layout {
+      display: grid;
+      grid-template-columns: 2fr 1fr;
+      gap: 16px;
+      max-width: 1280px;
+      margin: 20px auto;
+      padding: 0 16px 24px;
+    }
+    .panel {
+      background: var(--panel);
+      border: 1px solid var(--border);
+      border-radius: 14px;
+      box-shadow: 0 8px 24px rgba(0,0,0,0.05);
+    }
+    .chat {
+      display: flex;
+      flex-direction: column;
+      min-height: 80vh;
+    }
+    .chat-head {
+      padding: 14px 16px;
+      border-bottom: 1px solid var(--border);
+    }
+    .chat-head h1 {
+      margin: 0;
+      font-size: 20px;
+    }
+    .chat-head p {
+      margin: 6px 0 0;
+      color: var(--muted);
+      font-size: 13px;
+    }
+    #chat-log {
+      padding: 14px;
+      overflow-y: auto;
+      flex: 1;
+      display: flex;
+      flex-direction: column;
+      gap: 10px;
+    }
+    .bubble {
+      border-radius: 12px;
+      padding: 10px 12px;
+      max-width: 100%;
+      white-space: pre-wrap;
+      line-height: 1.45;
+      border: 1px solid var(--border);
+    }
+    .user { background: var(--bubble-user); align-self: flex-end; }
+    .assistant { background: var(--bubble-assistant); }
+    .tool-log {
+      margin-top: 8px;
+      border-top: 1px dashed var(--border);
+      padding-top: 8px;
+      font-size: 12px;
+      color: var(--muted);
+    }
+    details {
+      margin-top: 6px;
+      border: 1px solid var(--border);
+      border-radius: 10px;
+      padding: 8px;
+      background: #fafafa;
+    }
+    pre {
+      white-space: pre-wrap;
+      word-break: break-word;
+      margin: 6px 0 0;
+      font-size: 11px;
+      color: #111827;
+    }
+    form {
+      display: grid;
+      grid-template-columns: 1fr auto;
+      gap: 10px;
+      padding: 12px;
+      border-top: 1px solid var(--border);
+    }
+    input[type="text"] {
+      width: 100%;
+      border: 1px solid var(--border);
+      border-radius: 10px;
+      padding: 10px 12px;
+      font-size: 14px;
+    }
+    button {
+      border: 0;
+      border-radius: 10px;
+      background: linear-gradient(135deg, var(--accent), var(--accent-2));
+      color: #fff;
+      font-weight: 600;
+      padding: 10px 14px;
+      cursor: pointer;
+    }
+    .side {
+      display: flex;
+      flex-direction: column;
+      gap: 12px;
+    }
+    .card h2 {
+      margin: 0;
+      font-size: 15px;
+    }
+    .card-head {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      padding: 12px;
+      border-bottom: 1px solid var(--border);
+    }
+    .card-body {
+      padding: 12px;
+      max-height: 34vh;
+      overflow: auto;
+    }
+    .list {
+      display: grid;
+      gap: 8px;
+    }
+    .item {
+      border: 1px solid var(--border);
+      border-radius: 10px;
+      padding: 8px;
+      background: #fcfcfc;
+    }
+    .item a { color: #0c4a6e; text-decoration: none; }
+    .meta { color: var(--muted); font-size: 12px; margin-top: 4px; }
+    .warn { color: var(--error); font-size: 12px; }
+    .tiny { font-size: 12px; color: var(--muted); }
+    @media (max-width: 980px) {
+      .layout { grid-template-columns: 1fr; }
+      .chat { min-height: 60vh; }
+      .card-body { max-height: none; }
+    }
+  </style>
+</head>
+<body>
+  <div class="layout">
+    <section class="panel chat">
+      <header class="chat-head">
+        <h1>Jira + GitHub Agent</h1>
+        <p>Model: {{.Model}} | GitHub: {{if .GitHubReady}}enabled{{else}}disabled{{end}}</p>
+      </header>
+
+      <div id="chat-log">
+        <div class="bubble assistant">Ask anything about your Jira tickets or GitHub work.</div>
+      </div>
+
+      <form id="chat-form" hx-post="/chat" hx-target="#chat-log" hx-swap="beforeend">
+        <input name="prompt" type="text" placeholder="Ask the agent something..." autocomplete="off" required>
+        <button type="submit">Send</button>
+      </form>
+    </section>
+
+    <aside class="side">
+      <section class="panel card">
+        <div class="card-head">
+          <h2>Available GitHub Repos</h2>
+          <button hx-get="/partials/repos" hx-target="#repos-body" hx-swap="innerHTML">Refresh</button>
+        </div>
+        <div class="card-body" id="repos-body" hx-get="/partials/repos" hx-trigger="load, every 90s" hx-swap="innerHTML">
+          <div class="tiny">Loading repos...</div>
+        </div>
+      </section>
+
+      <section class="panel card">
+        <div class="card-head">
+          <h2>My Open Jira Issues</h2>
+          <button hx-get="/partials/jira-issues" hx-target="#jira-body" hx-swap="innerHTML">Refresh</button>
+        </div>
+        <div class="card-body" id="jira-body" hx-get="/partials/jira-issues" hx-trigger="load, every 90s" hx-swap="innerHTML">
+          <div class="tiny">Loading issues...</div>
+        </div>
+      </section>
+    </aside>
+  </div>
+
+  <script>
+    (function() {
+      var form = document.getElementById('chat-form');
+      var input = form.querySelector('input[name="prompt"]');
+      var log = document.getElementById('chat-log');
+
+      document.body.addEventListener('htmx:afterSwap', function(event) {
+        if (event.target && event.target.id === 'chat-log') {
+          log.scrollTop = log.scrollHeight;
+          input.value = '';
+          input.focus();
+        }
+      });
+    })();
+  </script>
+</body>
+</html>`))
+
+var chatChunkTmpl = template.Must(template.New("chatChunk").Parse(`
+<div class="bubble user">{{.Prompt}}</div>
+<div class="bubble assistant">
+  {{.Assistant}}
+  {{if .Events}}
+  <div class="tool-log">Tools used: {{len .Events}}</div>
+  {{range .Events}}
+  <details>
+    <summary>{{.Name}}</summary>
+    <div><strong>args</strong></div>
+    <pre>{{.Args}}</pre>
+    <div><strong>result</strong></div>
+    <pre>{{.Result}}</pre>
+  </details>
+  {{end}}
+  {{end}}
+</div>
+`))
+
+var reposTmpl = template.Must(template.New("repos").Parse(`
+{{if .Err}}<div class="warn">{{.Err}}</div>{{end}}
+{{if .Repos}}
+<div class="list">
+  {{range .Repos}}
+  <div class="item">
+    <a href="{{.URL}}" target="_blank" rel="noreferrer">{{.FullName}}</a>
+    <div class="meta">updated {{.Updated}} {{if .Private}}| private{{end}}</div>
+  </div>
+  {{end}}
+</div>
+{{else}}
+<div class="tiny">No repositories returned.</div>
+{{end}}
+`))
+
+var issuesTmpl = template.Must(template.New("issues").Parse(`
+{{if .Err}}<div class="warn">{{.Err}}</div>{{end}}
+{{if .Issues}}
+<div class="list">
+  {{range .Issues}}
+  <div class="item">
+    <div><strong>{{.Key}}</strong> - {{.Summary}}</div>
+    <div class="meta">{{.Status}} | {{.Assignee}} | updated {{.Updated}}</div>
+  </div>
+  {{end}}
+</div>
+{{else}}
+<div class="tiny">No Jira issues returned.</div>
+{{end}}
+`))

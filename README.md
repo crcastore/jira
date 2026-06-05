@@ -16,6 +16,19 @@ go run .
 go build -o jira-agent && ./jira-agent
 ```
 
+## Web UI (Go + HTMX)
+
+```bash
+go run . serve
+```
+
+Then open `http://localhost:8080`.
+
+What the page shows:
+- Chat box powered by the same Jira/GitHub tool-calling agent
+- Available GitHub repositories (from `gh_list_my_repos` equivalent data)
+- Your open Jira issues (`assignee = currentUser() AND statusCategory != Done`)
+
 ## Configuration
 
 Copy `.env.example` to `.env` and fill it in (or export real env vars):
@@ -33,12 +46,15 @@ GITHUB_TOKEN=ghp_...
 # Defaults to local Ollama:
 LLM_BASE_URL=http://localhost:11434/v1
 LLM_API_KEY=ollama
-LLM_MODEL=llama3.1
+LLM_MODEL=llama3.1:8b
+WEB_LLM_TIMEOUT_SEC=180
+# set to 0 to disable timeout for web chat requests
 
 # Or OpenAI:
 # LLM_BASE_URL=https://api.openai.com/v1
 # LLM_API_KEY=sk-...
 # LLM_MODEL=gpt-4o-mini
+# WEB_LLM_TIMEOUT_SEC=180
 ```
 
 Get a Jira API token: <https://id.atlassian.com/manage-profile/security/api-tokens>
