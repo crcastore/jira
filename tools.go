@@ -9,134 +9,31 @@ import (
 )
 
 // ToolSchemas describes every tool exposed to the LLM.
+// Trimmed to a focused 8-tool GitHub issue workflow. The removed tool schemas
+// (all Jira tools + extra GitHub tools) are archived in REMOVED_TOOLS.md and can
+// be pasted back here to restore them. CallTool still dispatches them if called.
 var ToolSchemas = []openai.Tool{
-	{Type: openai.ToolTypeFunction, Function: &openai.FunctionDefinition{
-		Name:        "search_issues",
-		Description: "Search Jira issues using JQL. Returns a compact list of matching issues.",
-		Parameters: jsonschema.Definition{
-			Type: jsonschema.Object,
-			Properties: map[string]jsonschema.Definition{
-				"jql":         {Type: jsonschema.String, Description: "JQL query, e.g. 'assignee = currentUser() AND status != Done'"},
-				"max_results": {Type: jsonschema.Integer},
-			},
-			Required: []string{"jql"},
-		},
-	}},
-	{Type: openai.ToolTypeFunction, Function: &openai.FunctionDefinition{
-		Name:        "get_issue",
-		Description: "Fetch full details for one issue by its key (e.g. ABC-123).",
-		Parameters: jsonschema.Definition{
-			Type:       jsonschema.Object,
-			Properties: map[string]jsonschema.Definition{"key": {Type: jsonschema.String}},
-			Required:   []string{"key"},
-		},
-	}},
-	{Type: openai.ToolTypeFunction, Function: &openai.FunctionDefinition{
-		Name:        "create_issue",
-		Description: "Create a new Jira issue in the given project.",
-		Parameters: jsonschema.Definition{
-			Type: jsonschema.Object,
-			Properties: map[string]jsonschema.Definition{
-				"project_key":         {Type: jsonschema.String},
-				"summary":             {Type: jsonschema.String},
-				"issue_type":          {Type: jsonschema.String},
-				"description":         {Type: jsonschema.String},
-				"assignee_account_id": {Type: jsonschema.String},
-				"priority":            {Type: jsonschema.String, Description: "e.g. Highest, High, Medium, Low, Lowest"},
-				"labels":              {Type: jsonschema.Array, Items: &jsonschema.Definition{Type: jsonschema.String}},
-			},
-			Required: []string{"project_key", "summary"},
-		},
-	}},
-	{Type: openai.ToolTypeFunction, Function: &openai.FunctionDefinition{
-		Name:        "add_comment",
-		Description: "Add a plain-text comment to an issue.",
-		Parameters: jsonschema.Definition{
-			Type: jsonschema.Object,
-			Properties: map[string]jsonschema.Definition{
-				"key":  {Type: jsonschema.String},
-				"body": {Type: jsonschema.String},
-			},
-			Required: []string{"key", "body"},
-		},
-	}},
-	{Type: openai.ToolTypeFunction, Function: &openai.FunctionDefinition{
-		Name:        "list_transitions",
-		Description: "List available workflow transitions for an issue (use before transition_issue).",
-		Parameters: jsonschema.Definition{
-			Type:       jsonschema.Object,
-			Properties: map[string]jsonschema.Definition{"key": {Type: jsonschema.String}},
-			Required:   []string{"key"},
-		},
-	}},
-	{Type: openai.ToolTypeFunction, Function: &openai.FunctionDefinition{
-		Name:        "transition_issue",
-		Description: "Move an issue to a new status using a transition ID from list_transitions.",
-		Parameters: jsonschema.Definition{
-			Type: jsonschema.Object,
-			Properties: map[string]jsonschema.Definition{
-				"key":           {Type: jsonschema.String},
-				"transition_id": {Type: jsonschema.String},
-			},
-			Required: []string{"key", "transition_id"},
-		},
-	}},
-	{Type: openai.ToolTypeFunction, Function: &openai.FunctionDefinition{
-		Name:        "update_issue_fields",
-		Description: "Update arbitrary fields on an issue. `fields` must be a JSON object matching Jira's edit API.",
-		Parameters: jsonschema.Definition{
-			Type: jsonschema.Object,
-			Properties: map[string]jsonschema.Definition{
-				"key":    {Type: jsonschema.String},
-				"fields": {Type: jsonschema.Object},
-			},
-			Required: []string{"key", "fields"},
-		},
-	}},
-	{Type: openai.ToolTypeFunction, Function: &openai.FunctionDefinition{
-		Name:        "search_users",
-		Description: "Find users by name/email; returns accountIds usable as assignee.",
-		Parameters: jsonschema.Definition{
-			Type: jsonschema.Object,
-			Properties: map[string]jsonschema.Definition{
-				"query":       {Type: jsonschema.String},
-				"max_results": {Type: jsonschema.Integer},
-			},
-			Required: []string{"query"},
-		},
-	}},
-	{Type: openai.ToolTypeFunction, Function: &openai.FunctionDefinition{
-		Name:        "list_projects",
-		Description: "List Jira projects available to the current user.",
-		Parameters:  jsonschema.Definition{Type: jsonschema.Object, Properties: map[string]jsonschema.Definition{}},
-	}},
-	{Type: openai.ToolTypeFunction, Function: &openai.FunctionDefinition{
-		Name:        "myself",
-		Description: "Return the authenticated user's profile (accountId, email, displayName).",
-		Parameters:  jsonschema.Definition{Type: jsonschema.Object, Properties: map[string]jsonschema.Definition{}},
-	}},
-
 	// ---------- GitHub ----------
 	{Type: openai.ToolTypeFunction, Function: &openai.FunctionDefinition{
 		Name:        "gh_me",
-		Description: "Return the authenticated GitHub user's profile (login, name, email).",
+		Description: "Get the authenticated GitHub user.",
 		Parameters:  jsonschema.Definition{Type: jsonschema.Object, Properties: map[string]jsonschema.Definition{}},
 	}},
 	{Type: openai.ToolTypeFunction, Function: &openai.FunctionDefinition{
 		Name:        "gh_list_my_repos",
-		Description: "List repositories the authenticated GitHub user has access to. Auto-paginates through everything (up to max_total, default 300).",
+		Description: "List the user's GitHub repos (auto-paginates).",
 		Parameters: jsonschema.Definition{
 			Type: jsonschema.Object,
 			Properties: map[string]jsonschema.Definition{
-				"visibility": {Type: jsonschema.String, Description: "all | public | private"},
-				"sort":       {Type: jsonschema.String, Description: "created | updated | pushed | full_name"},
-				"max_total":  {Type: jsonschema.Integer, Description: "cap on total repos returned"},
+				"visibility": {Type: jsonschema.String, Description: "all|public|private"},
+				"sort":       {Type: jsonschema.String, Description: "created|updated|pushed|full_name"},
+				"max_total":  {Type: jsonschema.Integer},
 			},
 		},
 	}},
 	{Type: openai.ToolTypeFunction, Function: &openai.FunctionDefinition{
 		Name:        "gh_get_repo",
-		Description: "Fetch a GitHub repository's metadata.",
+		Description: "Get a GitHub repo's metadata.",
 		Parameters: jsonschema.Definition{
 			Type: jsonschema.Object,
 			Properties: map[string]jsonschema.Definition{
@@ -147,28 +44,16 @@ var ToolSchemas = []openai.Tool{
 		},
 	}},
 	{Type: openai.ToolTypeFunction, Function: &openai.FunctionDefinition{
-		Name:        "gh_search_repos",
-		Description: "Search GitHub repositories using the search syntax (e.g. 'topic:cli language:go stars:>500').",
-		Parameters: jsonschema.Definition{
-			Type: jsonschema.Object,
-			Properties: map[string]jsonschema.Definition{
-				"query":    {Type: jsonschema.String},
-				"per_page": {Type: jsonschema.Integer},
-			},
-			Required: []string{"query"},
-		},
-	}},
-	{Type: openai.ToolTypeFunction, Function: &openai.FunctionDefinition{
 		Name:        "gh_list_issues",
-		Description: "List issues in a GitHub repo. Note: includes pull requests too (GitHub treats PRs as issues).",
+		Description: "List repo issues (includes PRs).",
 		Parameters: jsonschema.Definition{
 			Type: jsonschema.Object,
 			Properties: map[string]jsonschema.Definition{
 				"owner":    {Type: jsonschema.String},
 				"repo":     {Type: jsonschema.String},
-				"state":    {Type: jsonschema.String, Description: "open | closed | all"},
-				"labels":   {Type: jsonschema.String, Description: "comma-separated label names"},
-				"assignee": {Type: jsonschema.String, Description: "GitHub login, or '*' for any, 'none' for none"},
+				"state":    {Type: jsonschema.String, Description: "open|closed|all"},
+				"labels":   {Type: jsonschema.String, Description: "comma-separated labels"},
+				"assignee": {Type: jsonschema.String, Description: "login, '*', or 'none'"},
 				"per_page": {Type: jsonschema.Integer},
 			},
 			Required: []string{"owner", "repo"},
@@ -176,7 +61,7 @@ var ToolSchemas = []openai.Tool{
 	}},
 	{Type: openai.ToolTypeFunction, Function: &openai.FunctionDefinition{
 		Name:        "gh_get_issue",
-		Description: "Fetch a single GitHub issue (or PR) by number.",
+		Description: "Get one GitHub issue/PR by number.",
 		Parameters: jsonschema.Definition{
 			Type: jsonschema.Object,
 			Properties: map[string]jsonschema.Definition{
@@ -189,7 +74,7 @@ var ToolSchemas = []openai.Tool{
 	}},
 	{Type: openai.ToolTypeFunction, Function: &openai.FunctionDefinition{
 		Name:        "gh_create_issue",
-		Description: "Create a new GitHub issue.",
+		Description: "Create a GitHub issue.",
 		Parameters: jsonschema.Definition{
 			Type: jsonschema.Object,
 			Properties: map[string]jsonschema.Definition{
@@ -201,20 +86,6 @@ var ToolSchemas = []openai.Tool{
 				"labels":    {Type: jsonschema.Array, Items: &jsonschema.Definition{Type: jsonschema.String}},
 			},
 			Required: []string{"owner", "repo", "title"},
-		},
-	}},
-	{Type: openai.ToolTypeFunction, Function: &openai.FunctionDefinition{
-		Name:        "gh_update_issue",
-		Description: "Update fields on a GitHub issue (title, body, state, labels, assignees, milestone).",
-		Parameters: jsonschema.Definition{
-			Type: jsonschema.Object,
-			Properties: map[string]jsonschema.Definition{
-				"owner":  {Type: jsonschema.String},
-				"repo":   {Type: jsonschema.String},
-				"number": {Type: jsonschema.Integer},
-				"fields": {Type: jsonschema.Object, Description: "JSON object of fields to PATCH"},
-			},
-			Required: []string{"owner", "repo", "number", "fields"},
 		},
 	}},
 	{Type: openai.ToolTypeFunction, Function: &openai.FunctionDefinition{
@@ -232,7 +103,7 @@ var ToolSchemas = []openai.Tool{
 	}},
 	{Type: openai.ToolTypeFunction, Function: &openai.FunctionDefinition{
 		Name:        "gh_comment_issue",
-		Description: "Comment on a GitHub issue or pull request (PRs share the issue comment endpoint).",
+		Description: "Comment on a GitHub issue or PR.",
 		Parameters: jsonschema.Definition{
 			Type: jsonschema.Object,
 			Properties: map[string]jsonschema.Definition{
@@ -242,195 +113,6 @@ var ToolSchemas = []openai.Tool{
 				"body":   {Type: jsonschema.String},
 			},
 			Required: []string{"owner", "repo", "number", "body"},
-		},
-	}},
-	{Type: openai.ToolTypeFunction, Function: &openai.FunctionDefinition{
-		Name:        "gh_search_issues",
-		Description: "Search issues and PRs across GitHub (e.g. 'is:open is:pr author:@me archived:false').",
-		Parameters: jsonschema.Definition{
-			Type: jsonschema.Object,
-			Properties: map[string]jsonschema.Definition{
-				"query":    {Type: jsonschema.String},
-				"per_page": {Type: jsonschema.Integer},
-			},
-			Required: []string{"query"},
-		},
-	}},
-	{Type: openai.ToolTypeFunction, Function: &openai.FunctionDefinition{
-		Name:        "gh_list_pulls",
-		Description: "List pull requests in a GitHub repo.",
-		Parameters: jsonschema.Definition{
-			Type: jsonschema.Object,
-			Properties: map[string]jsonschema.Definition{
-				"owner":    {Type: jsonschema.String},
-				"repo":     {Type: jsonschema.String},
-				"state":    {Type: jsonschema.String, Description: "open | closed | all"},
-				"per_page": {Type: jsonschema.Integer},
-			},
-			Required: []string{"owner", "repo"},
-		},
-	}},
-	{Type: openai.ToolTypeFunction, Function: &openai.FunctionDefinition{
-		Name:        "gh_get_pull",
-		Description: "Fetch a single pull request.",
-		Parameters: jsonschema.Definition{
-			Type: jsonschema.Object,
-			Properties: map[string]jsonschema.Definition{
-				"owner":  {Type: jsonschema.String},
-				"repo":   {Type: jsonschema.String},
-				"number": {Type: jsonschema.Integer},
-			},
-			Required: []string{"owner", "repo", "number"},
-		},
-	}},
-	{Type: openai.ToolTypeFunction, Function: &openai.FunctionDefinition{
-		Name:        "gh_create_pull",
-		Description: "Open a new pull request. `head` is the source branch, `base` is the target.",
-		Parameters: jsonschema.Definition{
-			Type: jsonschema.Object,
-			Properties: map[string]jsonschema.Definition{
-				"owner": {Type: jsonschema.String},
-				"repo":  {Type: jsonschema.String},
-				"title": {Type: jsonschema.String},
-				"head":  {Type: jsonschema.String, Description: "branch (or fork:branch) to merge from"},
-				"base":  {Type: jsonschema.String, Description: "branch to merge into"},
-				"body":  {Type: jsonschema.String},
-				"draft": {Type: jsonschema.Boolean},
-			},
-			Required: []string{"owner", "repo", "title", "head", "base"},
-		},
-	}},
-	{Type: openai.ToolTypeFunction, Function: &openai.FunctionDefinition{
-		Name:        "gh_merge_pull",
-		Description: "Merge a pull request. Destructive — confirm with the user first.",
-		Parameters: jsonschema.Definition{
-			Type: jsonschema.Object,
-			Properties: map[string]jsonschema.Definition{
-				"owner":          {Type: jsonschema.String},
-				"repo":           {Type: jsonschema.String},
-				"number":         {Type: jsonschema.Integer},
-				"merge_method":   {Type: jsonschema.String, Description: "merge | squash | rebase"},
-				"commit_title":   {Type: jsonschema.String},
-				"commit_message": {Type: jsonschema.String},
-			},
-			Required: []string{"owner", "repo", "number"},
-		},
-	}},
-	{Type: openai.ToolTypeFunction, Function: &openai.FunctionDefinition{
-		Name:        "gh_list_pr_files",
-		Description: "List files changed in a pull request.",
-		Parameters: jsonschema.Definition{
-			Type: jsonschema.Object,
-			Properties: map[string]jsonschema.Definition{
-				"owner":    {Type: jsonschema.String},
-				"repo":     {Type: jsonschema.String},
-				"number":   {Type: jsonschema.Integer},
-				"per_page": {Type: jsonschema.Integer},
-			},
-			Required: []string{"owner", "repo", "number"},
-		},
-	}},
-	{Type: openai.ToolTypeFunction, Function: &openai.FunctionDefinition{
-		Name:        "gh_review_pull",
-		Description: "Submit a review on a pull request.",
-		Parameters: jsonschema.Definition{
-			Type: jsonschema.Object,
-			Properties: map[string]jsonschema.Definition{
-				"owner":  {Type: jsonschema.String},
-				"repo":   {Type: jsonschema.String},
-				"number": {Type: jsonschema.Integer},
-				"event":  {Type: jsonschema.String, Description: "APPROVE | REQUEST_CHANGES | COMMENT"},
-				"body":   {Type: jsonschema.String},
-			},
-			Required: []string{"owner", "repo", "number", "event"},
-		},
-	}},
-	{Type: openai.ToolTypeFunction, Function: &openai.FunctionDefinition{
-		Name:        "gh_list_workflows",
-		Description: "List GitHub Actions workflows defined in a repo.",
-		Parameters: jsonschema.Definition{
-			Type: jsonschema.Object,
-			Properties: map[string]jsonschema.Definition{
-				"owner": {Type: jsonschema.String},
-				"repo":  {Type: jsonschema.String},
-			},
-			Required: []string{"owner", "repo"},
-		},
-	}},
-	{Type: openai.ToolTypeFunction, Function: &openai.FunctionDefinition{
-		Name:        "gh_run_workflow",
-		Description: "Trigger a workflow_dispatch run. workflow_id can be the numeric id or the filename (e.g. 'test.yml'). The workflow must declare `on: workflow_dispatch`.",
-		Parameters: jsonschema.Definition{
-			Type: jsonschema.Object,
-			Properties: map[string]jsonschema.Definition{
-				"owner":       {Type: jsonschema.String},
-				"repo":        {Type: jsonschema.String},
-				"workflow_id": {Type: jsonschema.String, Description: "numeric id or filename"},
-				"ref":         {Type: jsonschema.String, Description: "branch, tag, or sha (defaults to main)"},
-				"inputs":      {Type: jsonschema.Object, Description: "optional inputs map for the workflow"},
-			},
-			Required: []string{"owner", "repo", "workflow_id"},
-		},
-	}},
-	{Type: openai.ToolTypeFunction, Function: &openai.FunctionDefinition{
-		Name:        "gh_list_workflow_runs",
-		Description: "List recent workflow runs for a repo (optionally filtered by workflow_id, status, or branch).",
-		Parameters: jsonschema.Definition{
-			Type: jsonschema.Object,
-			Properties: map[string]jsonschema.Definition{
-				"owner":       {Type: jsonschema.String},
-				"repo":        {Type: jsonschema.String},
-				"workflow_id": {Type: jsonschema.String},
-				"status":      {Type: jsonschema.String, Description: "queued | in_progress | completed | success | failure | cancelled"},
-				"branch":      {Type: jsonschema.String},
-				"per_page":    {Type: jsonschema.Integer},
-			},
-			Required: []string{"owner", "repo"},
-		},
-	}},
-	{Type: openai.ToolTypeFunction, Function: &openai.FunctionDefinition{
-		Name:        "gh_get_workflow_run",
-		Description: "Fetch a single workflow run by its numeric id.",
-		Parameters: jsonschema.Definition{
-			Type: jsonschema.Object,
-			Properties: map[string]jsonschema.Definition{
-				"owner":  {Type: jsonschema.String},
-				"repo":   {Type: jsonschema.String},
-				"run_id": {Type: jsonschema.Integer},
-			},
-			Required: []string{"owner", "repo", "run_id"},
-		},
-	}},
-	{Type: openai.ToolTypeFunction, Function: &openai.FunctionDefinition{
-		Name:        "gh_wait_for_workflow_run",
-		Description: "Block (polling) until a workflow run reaches status=completed, then return it with its conclusion (success/failure/cancelled/...). Use after gh_run_workflow or when checking a run already in progress.",
-		Parameters: jsonschema.Definition{
-			Type: jsonschema.Object,
-			Properties: map[string]jsonschema.Definition{
-				"owner":        {Type: jsonschema.String},
-				"repo":         {Type: jsonschema.String},
-				"run_id":       {Type: jsonschema.Integer},
-				"timeout_sec":  {Type: jsonschema.Integer, Description: "max seconds to wait (default 600, hard cap 1800)"},
-				"interval_sec": {Type: jsonschema.Integer, Description: "poll interval (default 5)"},
-			},
-			Required: []string{"owner", "repo", "run_id"},
-		},
-	}},
-	{Type: openai.ToolTypeFunction, Function: &openai.FunctionDefinition{
-		Name:        "gh_run_workflow_and_wait",
-		Description: "Trigger a workflow_dispatch run and block until it finishes. Prefer this over gh_run_workflow when the user wants the result. Returns the completed run with its conclusion.",
-		Parameters: jsonschema.Definition{
-			Type: jsonschema.Object,
-			Properties: map[string]jsonschema.Definition{
-				"owner":        {Type: jsonschema.String},
-				"repo":         {Type: jsonschema.String},
-				"workflow_id":  {Type: jsonschema.String, Description: "numeric id or filename"},
-				"ref":          {Type: jsonschema.String, Description: "branch, tag, or sha (defaults to main)"},
-				"inputs":       {Type: jsonschema.Object, Description: "optional inputs map"},
-				"timeout_sec":  {Type: jsonschema.Integer, Description: "max seconds to wait (default 600, hard cap 1800)"},
-				"interval_sec": {Type: jsonschema.Integer, Description: "poll interval (default 5)"},
-			},
-			Required: []string{"owner", "repo", "workflow_id"},
 		},
 	}},
 }
