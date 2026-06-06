@@ -641,8 +641,8 @@ var pageTmpl = template.Must(template.New("page").Parse(`<!doctype html>
         <div class="bubble assistant">Ask anything about your Jira tickets or GitHub work.</div>
       </div>
 
-			<form id="chat-form" hx-post="/chat" hx-target="#chat-log" hx-swap="beforeend">
-				<select name="model" aria-label="Model">
+      <form id="chat-form" hx-post="/chat" hx-target="#chat-log" hx-swap="beforeend">
+				<select name="model" aria-label="Model" id="model-select">
 					{{if .Models}}
 						{{range .Models}}
 							<option value="{{.}}" {{if eq . $.Model}}selected{{end}}>{{.}}</option>
