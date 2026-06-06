@@ -407,11 +407,11 @@ var ToolSchemas = []openai.Tool{
 		Parameters: jsonschema.Definition{
 			Type: jsonschema.Object,
 			Properties: map[string]jsonschema.Definition{
-				"owner":         {Type: jsonschema.String},
-				"repo":          {Type: jsonschema.String},
-				"run_id":        {Type: jsonschema.Integer},
-				"timeout_sec":   {Type: jsonschema.Integer, Description: "max seconds to wait (default 600, hard cap 1800)"},
-				"interval_sec":  {Type: jsonschema.Integer, Description: "poll interval (default 5)"},
+				"owner":        {Type: jsonschema.String},
+				"repo":         {Type: jsonschema.String},
+				"run_id":       {Type: jsonschema.Integer},
+				"timeout_sec":  {Type: jsonschema.Integer, Description: "max seconds to wait (default 600, hard cap 1800)"},
+				"interval_sec": {Type: jsonschema.Integer, Description: "poll interval (default 5)"},
 			},
 			Required: []string{"owner", "repo", "run_id"},
 		},
@@ -437,6 +437,27 @@ var ToolSchemas = []openai.Tool{
 
 const toolResultMaxBytes = 60000
 
+// toolAliases maps common model-hallucinated tool names to the canonical name.
+var toolAliases = map[string]string{
+	"gh_list_repos":  "gh_list_my_repos",
+	"gh_repos":       "gh_list_my_repos",
+	"list_repos":     "gh_list_my_repos",
+	"list_my_repos":  "gh_list_my_repos",
+	"gh_my_repos":    "gh_list_my_repos",
+	"search_jira":    "search_issues",
+	"jira_search":    "search_issues",
+	"get_jira_issue": "get_issue",
+}
+
+// canonicalToolName resolves an alias to its canonical tool name, returning the
+// input unchanged when there is no alias.
+func canonicalToolName(name string) string {
+	if c, ok := toolAliases[name]; ok {
+		return c
+	}
+	return name
+}
+
 // CallTool dispatches a tool call coming back from the LLM to the right client
 // (Jira or GitHub) and returns a JSON string suitable for the "tool" message content.
 // gc may be nil if no GitHub credentials are configured.
@@ -448,6 +469,8 @@ func CallTool(jc *JiraClient, gc *GitHubClient, name, argsJSON string) string {
 	if err := json.Unmarshal([]byte(argsJSON), &args); err != nil {
 		return errJSON(fmt.Sprintf("invalid JSON arguments: %v", err))
 	}
+
+	name = canonicalToolName(name)
 
 	var (
 		raw json.RawMessage
@@ -505,7 +528,8 @@ func CallTool(jc *JiraClient, gc *GitHubClient, name, argsJSON string) string {
 		"gh_close_issue", "gh_comment_issue", "gh_search_issues",
 		"gh_list_pulls", "gh_get_pull", "gh_create_pull", "gh_merge_pull",
 		"gh_list_pr_files", "gh_review_pull",
-		"gh_list_workflows", "gh_run_workflow", "gh_list_workflow_runs", "gh_get_workflow_run":
+		"gh_list_workflows", "gh_run_workflow", "gh_list_workflow_runs", "gh_get_workflow_run",
+		"gh_wait_for_workflow_run", "gh_run_workflow_and_wait":
 		if gc == nil {
 			return errJSON("GitHub is not configured (set GITHUB_TOKEN)")
 		}
@@ -780,7 +804,6 @@ func trimGitHub(name string, raw json.RawMessage) json.RawMessage {
 	case "gh_list_pulls":
 		return slimArray(raw, slimPull)
 
-
 	case "gh_list_workflows":
 		var payload struct {
 			TotalCount int              `json:"total_count"`
@@ -911,21 +934,21 @@ func slimPull(m map[string]any) map[string]any {
 		return nil
 	}
 	return map[string]any{
-		"number":     m["number"],
-		"title":      m["title"],
-		"state":      m["state"],
-		"draft":      m["draft"],
-		"user":       nested(m, "user", "login"),
-		"head":       nested(m, "head", "ref"),
-		"base":       nested(m, "base", "ref"),
-		"merged":     m["merged"],
-		"mergeable":  m["mergeable"],
-		"additions":  m["additions"],
-		"deletions":  m["deletions"],
+		"number":        m["number"],
+		"title":         m["title"],
+		"state":         m["state"],
+		"draft":         m["draft"],
+		"user":          nested(m, "user", "login"),
+		"head":          nested(m, "head", "ref"),
+		"base":          nested(m, "base", "ref"),
+		"merged":        m["merged"],
+		"mergeable":     m["mergeable"],
+		"additions":     m["additions"],
+		"deletions":     m["deletions"],
 		"changed_files": m["changed_files"],
-		"created_at": m["created_at"],
-		"updated_at": m["updated_at"],
-		"html_url":   m["html_url"],
+		"created_at":    m["created_at"],
+		"updated_at":    m["updated_at"],
+		"html_url":      m["html_url"],
 	}
 }
 
@@ -950,20 +973,20 @@ func slimWorkflowRun(m map[string]any) map[string]any {
 		return nil
 	}
 	return map[string]any{
-		"id":           m["id"],
-		"name":         m["name"],
-		"workflow_id":  m["workflow_id"],
-		"event":        m["event"],
-		"status":       m["status"],
-		"conclusion":   m["conclusion"],
-		"head_branch":  m["head_branch"],
-		"head_sha":     m["head_sha"],
-		"run_number":   m["run_number"],
-		"run_attempt":  m["run_attempt"],
-		"created_at":   m["created_at"],
-		"updated_at":   m["updated_at"],
-		"html_url":     m["html_url"],
-		"actor":        nested(m, "actor", "login"),
+		"id":          m["id"],
+		"name":        m["name"],
+		"workflow_id": m["workflow_id"],
+		"event":       m["event"],
+		"status":      m["status"],
+		"conclusion":  m["conclusion"],
+		"head_branch": m["head_branch"],
+		"head_sha":    m["head_sha"],
+		"run_number":  m["run_number"],
+		"run_attempt": m["run_attempt"],
+		"created_at":  m["created_at"],
+		"updated_at":  m["updated_at"],
+		"html_url":    m["html_url"],
+		"actor":       nested(m, "actor", "login"),
 	}
 }
 
