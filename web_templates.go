@@ -1,314 +1,6 @@
 package main
 
-import (
-	"context"
-	"crypto/rand"
-	"encoding/hex"
-	"encoding/json"
-	"errors"
-	"fmt"
-	"html/template"
-	"net/http"
-	"os"
-	"sort"
-	"strconv"
-	"strings"
-	"time"
-)
-
-type webApp struct {
-	chat       ChatService
-	llmTimeout time.Duration
-	jc         *JiraClient
-	gc         *GitHubClient
-}
-
-type repoItem struct {
-	FullName string
-	URL      string
-	Updated  string
-	Private  bool
-}
-
-type jiraIssueItem struct {
-	Key      string
-	Summary  string
-	Status   string
-	Assignee string
-	Updated  string
-}
-
-func serveWeb() {
-	loadDotEnv(".env")
-
-	jc, err := NewJiraClient()
-	if err != nil {
-		fmt.Fprintf(os.Stderr, "%v. Copy .env.example to .env and fill it in.\n", err)
-		os.Exit(1)
-	}
-
-	gc, gerr := NewGitHubClient()
-	if gerr != nil {
-		fmt.Fprintf(os.Stderr, "GitHub panel disabled: %v\n", gerr)
-	}
-
-	cfg := loadLLMConfig()
-	llmTimeoutSec := envOrInt("WEB_LLM_TIMEOUT_SEC", 600)
-	addr := envOr("WEB_ADDR", ":8080")
-
-	engine := newEngine(cfg, jc, gc)
-	catalog := NewOllamaModelCatalog(cfg.baseURL, http.DefaultClient)
-	chatSvc := NewAgentChatService(engine, systemPrompt, cfg.model, catalog)
-
-	app := &webApp{
-		chat:       chatSvc,
-		llmTimeout: time.Duration(llmTimeoutSec) * time.Second,
-		jc:         jc,
-		gc:         gc,
-	}
-
-	mux := http.NewServeMux()
-	mux.HandleFunc("/", app.handleIndex)
-	mux.HandleFunc("/chat", app.handleChat)
-	mux.HandleFunc("/partials/repos", app.handleRepos)
-	mux.HandleFunc("/partials/jira-issues", app.handleJiraIssues)
-	mux.HandleFunc("/healthz", func(w http.ResponseWriter, _ *http.Request) {
-		w.Header().Set("Content-Type", "text/plain; charset=utf-8")
-		_, _ = w.Write([]byte("ok"))
-	})
-
-	fmt.Printf("Web UI running on http://localhost%s\n", addr)
-	if err := http.ListenAndServe(addr, mux); err != nil {
-		fmt.Fprintf(os.Stderr, "web server error: %v\n", err)
-		os.Exit(1)
-	}
-}
-
-func (a *webApp) handleIndex(w http.ResponseWriter, r *http.Request) {
-	if r.Method != http.MethodGet {
-		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
-		return
-	}
-	_, _ = a.ensureSession(r, w)
-	models, modelsErr := a.chat.AvailableModels(r.Context())
-	w.Header().Set("Content-Type", "text/html; charset=utf-8")
-	_ = pageTmpl.Execute(w, map[string]any{
-		"Model":       a.chat.DefaultModel(),
-		"Models":      models,
-		"ModelsErr":   errString(modelsErr),
-		"GitHubReady": a.gc != nil,
-	})
-}
-
-func (a *webApp) handleRepos(w http.ResponseWriter, r *http.Request) {
-	if r.Method != http.MethodGet {
-		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
-		return
-	}
-	w.Header().Set("Content-Type", "text/html; charset=utf-8")
-	repos, err := a.fetchRepos()
-	_ = reposTmpl.Execute(w, map[string]any{"Repos": repos, "Err": errString(err)})
-}
-
-func (a *webApp) handleJiraIssues(w http.ResponseWriter, r *http.Request) {
-	if r.Method != http.MethodGet {
-		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
-		return
-	}
-	w.Header().Set("Content-Type", "text/html; charset=utf-8")
-	issues, err := a.fetchJiraIssues()
-	_ = issuesTmpl.Execute(w, map[string]any{"Issues": issues, "Err": errString(err)})
-}
-
-func (a *webApp) handleChat(w http.ResponseWriter, r *http.Request) {
-	if r.Method != http.MethodPost {
-		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
-		return
-	}
-	sid, _ := a.ensureSession(r, w)
-	if err := r.ParseForm(); err != nil {
-		http.Error(w, "invalid form", http.StatusBadRequest)
-		return
-	}
-	prompt := strings.TrimSpace(r.FormValue("prompt"))
-  model := strings.TrimSpace(r.FormValue("model"))
-  resolvedModel := a.chat.ResolveModel(r.Context(), model)
-	if prompt == "" {
-		http.Error(w, "prompt required", http.StatusBadRequest)
-		return
-	}
-
-  turn, err := a.chat.RunTurn(r.Context(), sid, prompt, resolvedModel)
-	assistant := turn.Reply
-	events := turn.Events
-	if err != nil {
-    assistant = a.friendlyLLMError(err, resolvedModel)
-		events = nil
-	}
-
-	w.Header().Set("Content-Type", "text/html; charset=utf-8")
-	_ = chatChunkTmpl.Execute(w, map[string]any{
-		"Prompt":    prompt,
-		"Assistant": assistant,
-		"Events":    events,
-	})
-}
-
-// friendlyLLMError turns a raw LLM transport error into actionable guidance.
-// A context deadline almost always means the local model was slower than the
-// configured per-request timeout (WEB_LLM_TIMEOUT_SEC), which is common on
-// laptops running larger models with the full tool schema.
-func (a *webApp) friendlyLLMError(err error, model string) string {
-	if errors.Is(err, context.DeadlineExceeded) || strings.Contains(err.Error(), "context deadline exceeded") {
-		return fmt.Sprintf(
-			"The model %q did not respond within %s. Local models can be slow to evaluate the full tool list. "+
-				"Try a smaller/faster model, keep it warm (OLLAMA_KEEP_ALIVE), or raise WEB_LLM_TIMEOUT_SEC in your .env, then restart the server.",
-			model, a.llmTimeout)
-	}
-	return "Error: " + err.Error()
-}
-
-func (a *webApp) fetchRepos() ([]repoItem, error) {
-	if a.gc == nil {
-		return nil, fmt.Errorf("GITHUB_TOKEN not set")
-	}
-	raw, err := a.gc.ListMyRepos("", "updated", 150)
-	if err != nil {
-		return nil, err
-	}
-	var repos []struct {
-		FullName string `json:"full_name"`
-		HTMLURL  string `json:"html_url"`
-		Updated  string `json:"updated_at"`
-		Private  bool   `json:"private"`
-	}
-	if err := json.Unmarshal(raw, &repos); err != nil {
-		return nil, err
-	}
-	items := make([]repoItem, 0, len(repos))
-	for _, r := range repos {
-		items = append(items, repoItem{
-			FullName: r.FullName,
-			URL:      r.HTMLURL,
-			Updated:  trimISODate(r.Updated),
-			Private:  r.Private,
-		})
-	}
-	sort.Slice(items, func(i, j int) bool { return items[i].Updated > items[j].Updated })
-	if len(items) > 40 {
-		items = items[:40]
-	}
-	return items, nil
-}
-
-func (a *webApp) fetchJiraIssues() ([]jiraIssueItem, error) {
-	raw, err := a.jc.Search(
-		"assignee = currentUser() AND statusCategory != Done ORDER BY updated DESC",
-		[]string{"summary", "status", "assignee", "updated"},
-		40,
-	)
-	if err != nil {
-		return nil, err
-	}
-
-	var payload struct {
-		Issues []struct {
-			Key    string `json:"key"`
-			Fields struct {
-				Summary string `json:"summary"`
-				Updated string `json:"updated"`
-				Status  struct {
-					Name string `json:"name"`
-				} `json:"status"`
-				Assignee struct {
-					DisplayName string `json:"displayName"`
-				} `json:"assignee"`
-			} `json:"fields"`
-		} `json:"issues"`
-	}
-	if err := json.Unmarshal(raw, &payload); err != nil {
-		return nil, err
-	}
-	items := make([]jiraIssueItem, 0, len(payload.Issues))
-	for _, it := range payload.Issues {
-		assignee := it.Fields.Assignee.DisplayName
-		if assignee == "" {
-			assignee = "Unassigned"
-		}
-		items = append(items, jiraIssueItem{
-			Key:      it.Key,
-			Summary:  it.Fields.Summary,
-			Status:   it.Fields.Status.Name,
-			Assignee: assignee,
-			Updated:  trimISODate(it.Fields.Updated),
-		})
-	}
-	return items, nil
-}
-
-func (a *webApp) ensureSession(r *http.Request, w http.ResponseWriter) (string, error) {
-	if c, err := r.Cookie("jira_agent_sid"); err == nil && c.Value != "" {
-		return c.Value, nil
-	}
-	id, err := randomHex(16)
-	if err != nil {
-		return "", err
-	}
-	http.SetCookie(w, &http.Cookie{
-		Name:     "jira_agent_sid",
-		Value:    id,
-		Path:     "/",
-		HttpOnly: true,
-		SameSite: http.SameSiteLaxMode,
-	})
-	return id, nil
-}
-
-func randomHex(n int) (string, error) {
-	b := make([]byte, n)
-	if _, err := rand.Read(b); err != nil {
-		return "", err
-	}
-	return hex.EncodeToString(b), nil
-}
-
-func trimISODate(s string) string {
-	if len(s) >= 10 {
-		return s[:10]
-	}
-	return s
-}
-
-func errString(err error) string {
-	if err == nil {
-		return ""
-	}
-	return err.Error()
-}
-
-func envOrInt(k string, def int) int {
-	v := strings.TrimSpace(os.Getenv(k))
-	if v == "" {
-		return def
-	}
-	n, err := strconv.Atoi(v)
-	if err != nil {
-		return def
-	}
-	if n < 0 {
-		return def
-	}
-	return n
-}
-
-func containsString(values []string, want string) bool {
-  for _, value := range values {
-    if value == want {
-      return true
-    }
-  }
-  return false
-}
+import "html/template"
 
 var pageTmpl = template.Must(template.New("page").Parse(`<!doctype html>
 <html lang="en">
@@ -410,20 +102,20 @@ var pageTmpl = template.Must(template.New("page").Parse(`<!doctype html>
     }
     form {
       display: grid;
-			grid-template-columns: auto 1fr auto;
+      grid-template-columns: auto 1fr auto;
       gap: 10px;
       padding: 12px;
       border-top: 1px solid var(--border);
     }
-		select {
-			border: 1px solid var(--border);
-			border-radius: 10px;
-			padding: 10px 12px;
-			font-size: 14px;
-			background: #fff;
-			color: var(--ink);
-			min-width: 180px;
-		}
+    select {
+      border: 1px solid var(--border);
+      border-radius: 10px;
+      padding: 10px 12px;
+      font-size: 14px;
+      background: #fff;
+      color: var(--ink);
+      min-width: 180px;
+    }
     input[type="text"] {
       width: 100%;
       border: 1px solid var(--border);
@@ -526,24 +218,24 @@ var pageTmpl = template.Must(template.New("page").Parse(`<!doctype html>
 
       <div id="chat-working" class="chat-working" aria-live="polite">
         <span class="typing"><span></span><span></span><span></span></span>
-        <span>Working…</span>
+        <span>Working...</span>
       </div>
 
       <form id="chat-form" hx-post="/chat" hx-target="#chat-log" hx-swap="beforeend"
             hx-indicator="#chat-working" hx-disabled-elt="find button">
-				<select name="model" aria-label="Model" id="model-select">
-					{{if .Models}}
-						{{range .Models}}
-							<option value="{{.}}" {{if eq . $.Model}}selected{{end}}>{{.}}</option>
-						{{end}}
-					{{else}}
-						<option value="{{.Model}}" selected>{{.Model}}</option>
-					{{end}}
-				</select>
+        <select name="model" aria-label="Model" id="model-select">
+          {{if .Models}}
+            {{range .Models}}
+              <option value="{{.}}" {{if eq . $.Model}}selected{{end}}>{{.}}</option>
+            {{end}}
+          {{else}}
+            <option value="{{.Model}}" selected>{{.Model}}</option>
+          {{end}}
+        </select>
         <input name="prompt" type="text" placeholder="Ask the agent something..." autocomplete="off" required>
         <button type="submit">Send</button>
       </form>
-			{{if .ModelsErr}}<div class="tiny" style="padding: 0 12px 12px;">Model list unavailable: {{.ModelsErr}}</div>{{end}}
+      {{if .ModelsErr}}<div class="tiny" style="padding: 0 12px 12px;">Model list unavailable: {{.ModelsErr}}</div>{{end}}
     </section>
 
     <aside class="side">
