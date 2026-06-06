@@ -5,6 +5,7 @@ import (
 	"crypto/rand"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"html/template"
 	"net/http"
@@ -19,14 +20,14 @@ import (
 )
 
 type webApp struct {
-	client   *openai.Client
-	model    string
-	baseURL  string
+	client     *openai.Client
+	model      string
+	baseURL    string
 	llmTimeout time.Duration
-	jc       *JiraClient
-	gc       *GitHubClient
-	sessions map[string][]openai.ChatCompletionMessage
-	mu       sync.Mutex
+	jc         *JiraClient
+	gc         *GitHubClient
+	sessions   map[string][]openai.ChatCompletionMessage
+	mu         sync.Mutex
 }
 
 type repoItem struct {
@@ -67,20 +68,20 @@ func serveWeb() {
 	baseURL := envOr("LLM_BASE_URL", "http://localhost:11434/v1")
 	apiKey := firstNonEmpty(os.Getenv("LLM_API_KEY"), os.Getenv("OPENAI_API_KEY"), "ollama")
 	model := envOr("LLM_MODEL", "llama3.1:8b")
-	llmTimeoutSec := envOrInt("WEB_LLM_TIMEOUT_SEC", 180)
+	llmTimeoutSec := envOrInt("WEB_LLM_TIMEOUT_SEC", 600)
 	addr := envOr("WEB_ADDR", ":8080")
 
 	cfg := openai.DefaultConfig(apiKey)
 	cfg.BaseURL = baseURL
 
 	app := &webApp{
-		client:   openai.NewClientWithConfig(cfg),
-		model:    model,
-		baseURL:  baseURL,
+		client:     openai.NewClientWithConfig(cfg),
+		model:      model,
+		baseURL:    baseURL,
 		llmTimeout: time.Duration(llmTimeoutSec) * time.Second,
-		jc:       jc,
-		gc:       gc,
-		sessions: map[string][]openai.ChatCompletionMessage{},
+		jc:         jc,
+		gc:         gc,
+		sessions:   map[string][]openai.ChatCompletionMessage{},
 	}
 
 	mux := http.NewServeMux()
@@ -162,7 +163,7 @@ func (a *webApp) handleChat(w http.ResponseWriter, r *http.Request) {
 
 	assistant, events, err := a.runAgentTurn(sid, prompt, model)
 	if err != nil {
-		assistant = "Error: " + err.Error()
+		assistant = a.friendlyLLMError(err, model)
 	}
 
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
@@ -171,6 +172,20 @@ func (a *webApp) handleChat(w http.ResponseWriter, r *http.Request) {
 		"Assistant": assistant,
 		"Events":    events,
 	})
+}
+
+// friendlyLLMError turns a raw LLM transport error into actionable guidance.
+// A context deadline almost always means the local model was slower than the
+// configured per-request timeout (WEB_LLM_TIMEOUT_SEC), which is common on
+// laptops running larger models with the full tool schema.
+func (a *webApp) friendlyLLMError(err error, model string) string {
+	if errors.Is(err, context.DeadlineExceeded) || strings.Contains(err.Error(), "context deadline exceeded") {
+		return fmt.Sprintf(
+			"The model %q did not respond within %s. Local models can be slow to evaluate the full tool list. "+
+				"Try a smaller/faster model, keep it warm (OLLAMA_KEEP_ALIVE), or raise WEB_LLM_TIMEOUT_SEC in your .env, then restart the server.",
+			model, a.llmTimeout)
+	}
+	return "Error: " + err.Error()
 }
 
 func (a *webApp) runAgentTurn(sessionID, prompt, model string) (string, []toolEvent, error) {
@@ -622,6 +637,36 @@ var pageTmpl = template.Must(template.New("page").Parse(`<!doctype html>
     .meta { color: var(--muted); font-size: 12px; margin-top: 4px; }
     .warn { color: var(--error); font-size: 12px; }
     .tiny { font-size: 12px; color: var(--muted); }
+    .chat-working {
+      display: none;
+      align-items: center;
+      gap: 8px;
+      margin: 0 14px 4px;
+      padding: 8px 12px;
+      align-self: flex-start;
+      border-radius: 12px;
+      border: 1px solid var(--border);
+      background: var(--bubble-assistant);
+      font-size: 13px;
+      color: var(--muted);
+    }
+    .chat-working.htmx-request { display: inline-flex; }
+    .typing { display: inline-flex; align-items: center; gap: 4px; }
+    .typing span {
+      width: 6px;
+      height: 6px;
+      border-radius: 50%;
+      background: var(--accent-2);
+      opacity: 0.4;
+      animation: typing-bounce 1.2s infinite ease-in-out;
+    }
+    .typing span:nth-child(2) { animation-delay: 0.2s; }
+    .typing span:nth-child(3) { animation-delay: 0.4s; }
+    @keyframes typing-bounce {
+      0%, 80%, 100% { transform: translateY(0); opacity: 0.4; }
+      40% { transform: translateY(-4px); opacity: 1; }
+    }
+    #chat-form.htmx-request button { opacity: 0.6; cursor: progress; }
     @media (max-width: 980px) {
       .layout { grid-template-columns: 1fr; }
       .chat { min-height: 60vh; }
@@ -641,7 +686,13 @@ var pageTmpl = template.Must(template.New("page").Parse(`<!doctype html>
         <div class="bubble assistant">Ask anything about your Jira tickets or GitHub work.</div>
       </div>
 
-      <form id="chat-form" hx-post="/chat" hx-target="#chat-log" hx-swap="beforeend">
+      <div id="chat-working" class="chat-working" aria-live="polite">
+        <span class="typing"><span></span><span></span><span></span></span>
+        <span>Working…</span>
+      </div>
+
+      <form id="chat-form" hx-post="/chat" hx-target="#chat-log" hx-swap="beforeend"
+            hx-indicator="#chat-working" hx-disabled-elt="find button">
 				<select name="model" aria-label="Model" id="model-select">
 					{{if .Models}}
 						{{range .Models}}

@@ -114,7 +114,12 @@ const widgetTmpl = `{{define "chat-widget"}}
   <div class="hx-chat-log" id="{{.LogID}}">
     <div class="hx-chat-bubble assistant">{{.Greeting}}</div>
   </div>
-  <form class="hx-chat-form" hx-post="{{.Endpoint}}" hx-target="#{{.LogID}}" hx-swap="beforeend">
+  <div class="hx-chat-working htmx-indicator" aria-live="polite">
+    <span class="hx-chat-typing"><span></span><span></span><span></span></span>
+    <span class="hx-chat-working-text">Working…</span>
+  </div>
+  <form class="hx-chat-form" hx-post="{{.Endpoint}}" hx-target="#{{.LogID}}" hx-swap="beforeend"
+        hx-indicator="closest .hx-chat find .hx-chat-working" hx-disabled-elt="find button">
     {{if .Models}}
     <select name="model" aria-label="Model">
       {{$sel := .Model}}
@@ -249,6 +254,45 @@ const componentCSS = `
   font-size: 12px;
   color: var(--hxc-muted, #6b7280);
   padding: 0 12px 12px;
+}
+.hx-chat-working {
+  display: none;
+  align-items: center;
+  gap: 8px;
+  margin: 0 14px 4px;
+  padding: 8px 12px;
+  align-self: flex-start;
+  border-radius: 12px;
+  border: 1px solid var(--hxc-border, #d1d5db);
+  background: var(--hxc-bubble-assistant, #fff7ed);
+  font-size: 13px;
+  color: var(--hxc-muted, #6b7280);
+}
+.hx-chat-working.htmx-request {
+  display: inline-flex;
+}
+.hx-chat-typing {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+}
+.hx-chat-typing span {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--hxc-accent-dot, #0f766e);
+  opacity: 0.4;
+  animation: hx-chat-bounce 1.2s infinite ease-in-out;
+}
+.hx-chat-typing span:nth-child(2) { animation-delay: 0.2s; }
+.hx-chat-typing span:nth-child(3) { animation-delay: 0.4s; }
+@keyframes hx-chat-bounce {
+  0%, 80%, 100% { transform: translateY(0); opacity: 0.4; }
+  40% { transform: translateY(-4px); opacity: 1; }
+}
+.hx-chat-form.htmx-request button {
+  opacity: 0.6;
+  cursor: progress;
 }
 @media (max-width: 680px) {
   .hx-chat-form { grid-template-columns: 1fr; }

@@ -122,3 +122,34 @@ func TestStyleTagIsScoped(t *testing.T) {
 		t.Errorf("styles should be scoped under .hx-chat")
 	}
 }
+
+func TestWidgetShowsWorkingIndicator(t *testing.T) {
+	c := New()
+	html, err := c.Widget(WidgetData{Endpoint: "/chat"})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	got := string(html)
+	for _, want := range []string{
+		`hx-indicator="closest .hx-chat find .hx-chat-working"`,
+		`hx-disabled-elt="find button"`,
+		`class="hx-chat-working htmx-indicator"`,
+		`hx-chat-typing`,
+		`Working`,
+	} {
+		if !strings.Contains(got, want) {
+			t.Errorf("widget missing working indicator markup %q\n---\n%s", want, got)
+		}
+	}
+}
+
+func TestWorkingIndicatorIsHiddenByDefault(t *testing.T) {
+	// The indicator must be hidden until htmx adds the htmx-request class.
+	css := string(CSS())
+	if !strings.Contains(css, ".hx-chat-working {") || !strings.Contains(css, "display: none;") {
+		t.Errorf("expected .hx-chat-working to default to display:none")
+	}
+	if !strings.Contains(css, ".hx-chat-working.htmx-request {") {
+		t.Errorf("expected a rule to reveal the indicator during a request")
+	}
+}
