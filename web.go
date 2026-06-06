@@ -13,21 +13,14 @@ import (
 	"sort"
 	"strconv"
 	"strings"
-	"sync"
 	"time"
-
-	openai "github.com/sashabaranov/go-openai"
 )
 
 type webApp struct {
-	client     *openai.Client
-	model      string
-	baseURL    string
+	chat       ChatService
 	llmTimeout time.Duration
 	jc         *JiraClient
 	gc         *GitHubClient
-	sessions   map[string][]openai.ChatCompletionMessage
-	mu         sync.Mutex
 }
 
 type repoItem struct {
@@ -45,12 +38,6 @@ type jiraIssueItem struct {
 	Updated  string
 }
 
-type toolEvent struct {
-	Name   string
-	Args   string
-	Result string
-}
-
 func serveWeb() {
 	loadDotEnv(".env")
 
@@ -65,23 +52,19 @@ func serveWeb() {
 		fmt.Fprintf(os.Stderr, "GitHub panel disabled: %v\n", gerr)
 	}
 
-	baseURL := envOr("LLM_BASE_URL", "http://localhost:11434/v1")
-	apiKey := firstNonEmpty(os.Getenv("LLM_API_KEY"), os.Getenv("OPENAI_API_KEY"), "ollama")
-	model := envOr("LLM_MODEL", "llama3.1:8b")
+	cfg := loadLLMConfig()
 	llmTimeoutSec := envOrInt("WEB_LLM_TIMEOUT_SEC", 600)
 	addr := envOr("WEB_ADDR", ":8080")
 
-	cfg := openai.DefaultConfig(apiKey)
-	cfg.BaseURL = baseURL
+	engine := newEngine(cfg, jc, gc)
+	catalog := NewOllamaModelCatalog(cfg.baseURL, http.DefaultClient)
+	chatSvc := NewAgentChatService(engine, systemPrompt, cfg.model, catalog)
 
 	app := &webApp{
-		client:     openai.NewClientWithConfig(cfg),
-		model:      model,
-		baseURL:    baseURL,
+		chat:       chatSvc,
 		llmTimeout: time.Duration(llmTimeoutSec) * time.Second,
 		jc:         jc,
 		gc:         gc,
-		sessions:   map[string][]openai.ChatCompletionMessage{},
 	}
 
 	mux := http.NewServeMux()
@@ -107,10 +90,10 @@ func (a *webApp) handleIndex(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	_, _ = a.ensureSession(r, w)
-	models, modelsErr := a.fetchOllamaModels()
+	models, modelsErr := a.chat.AvailableModels(r.Context())
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
 	_ = pageTmpl.Execute(w, map[string]any{
-		"Model":       a.model,
+		"Model":       a.chat.DefaultModel(),
 		"Models":      models,
 		"ModelsErr":   errString(modelsErr),
 		"GitHubReady": a.gc != nil,
@@ -148,22 +131,19 @@ func (a *webApp) handleChat(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	prompt := strings.TrimSpace(r.FormValue("prompt"))
-	model := strings.TrimSpace(r.FormValue("model"))
-	if model == "" {
-		model = a.model
-	}
-	models, _ := a.fetchOllamaModels()
-	if len(models) > 0 && !containsString(models, model) {
-		model = a.model
-	}
+  model := strings.TrimSpace(r.FormValue("model"))
+  resolvedModel := a.chat.ResolveModel(r.Context(), model)
 	if prompt == "" {
 		http.Error(w, "prompt required", http.StatusBadRequest)
 		return
 	}
 
-	assistant, events, err := a.runAgentTurn(sid, prompt, model)
+  turn, err := a.chat.RunTurn(r.Context(), sid, prompt, resolvedModel)
+	assistant := turn.Reply
+	events := turn.Events
 	if err != nil {
-		assistant = a.friendlyLLMError(err, model)
+    assistant = a.friendlyLLMError(err, resolvedModel)
+		events = nil
 	}
 
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
@@ -186,71 +166,6 @@ func (a *webApp) friendlyLLMError(err error, model string) string {
 			model, a.llmTimeout)
 	}
 	return "Error: " + err.Error()
-}
-
-func (a *webApp) runAgentTurn(sessionID, prompt, model string) (string, []toolEvent, error) {
-	messages := a.getSessionMessages(sessionID)
-	messages = append(messages, openai.ChatCompletionMessage{Role: openai.ChatMessageRoleUser, Content: prompt})
-	events := make([]toolEvent, 0)
-	assistantText := ""
-	if strings.TrimSpace(model) == "" {
-		model = a.model
-	}
-
-	for step := 0; step < maxSteps; step++ {
-		ctx := context.Background()
-		cancel := func() {}
-		if a.llmTimeout > 0 {
-			ctx, cancel = context.WithTimeout(ctx, a.llmTimeout)
-		}
-		resp, err := a.client.CreateChatCompletion(ctx, openai.ChatCompletionRequest{
-			Model:      model,
-			Messages:   messages,
-			Tools:      ToolSchemas,
-			ToolChoice: "auto",
-		})
-		cancel()
-		if err != nil {
-			a.setSessionMessages(sessionID, messages)
-			return assistantText, events, err
-		}
-		msg := resp.Choices[0].Message
-		messages = append(messages, openai.ChatCompletionMessage{
-			Role:      openai.ChatMessageRoleAssistant,
-			Content:   msg.Content,
-			ToolCalls: msg.ToolCalls,
-		})
-		assistantText = strings.TrimSpace(msg.Content)
-
-		if len(msg.ToolCalls) == 0 {
-			if assistantText == "" {
-				assistantText = "Done."
-			}
-			a.setSessionMessages(sessionID, messages)
-			return assistantText, events, nil
-		}
-
-		for _, tc := range msg.ToolCalls {
-			args := tc.Function.Arguments
-			if strings.TrimSpace(args) == "" {
-				args = "{}"
-			}
-			result := CallTool(a.jc, a.gc, tc.Function.Name, args)
-			events = append(events, toolEvent{Name: tc.Function.Name, Args: args, Result: result})
-			messages = append(messages, openai.ChatCompletionMessage{
-				Role:       openai.ChatMessageRoleTool,
-				ToolCallID: tc.ID,
-				Name:       tc.Function.Name,
-				Content:    result,
-			})
-		}
-	}
-
-	a.setSessionMessages(sessionID, messages)
-	if assistantText == "" {
-		assistantText = "Step limit reached."
-	}
-	return assistantText, events, nil
 }
 
 func (a *webApp) fetchRepos() ([]repoItem, error) {
@@ -331,23 +246,6 @@ func (a *webApp) fetchJiraIssues() ([]jiraIssueItem, error) {
 	return items, nil
 }
 
-func (a *webApp) getSessionMessages(sessionID string) []openai.ChatCompletionMessage {
-	a.mu.Lock()
-	defer a.mu.Unlock()
-	if msgs, ok := a.sessions[sessionID]; ok {
-		return append([]openai.ChatCompletionMessage(nil), msgs...)
-	}
-	msgs := []openai.ChatCompletionMessage{{Role: openai.ChatMessageRoleSystem, Content: systemPrompt}}
-	a.sessions[sessionID] = msgs
-	return append([]openai.ChatCompletionMessage(nil), msgs...)
-}
-
-func (a *webApp) setSessionMessages(sessionID string, msgs []openai.ChatCompletionMessage) {
-	a.mu.Lock()
-	defer a.mu.Unlock()
-	a.sessions[sessionID] = append([]openai.ChatCompletionMessage(nil), msgs...)
-}
-
 func (a *webApp) ensureSession(r *http.Request, w http.ResponseWriter) (string, error) {
 	if c, err := r.Cookie("jira_agent_sid"); err == nil && c.Value != "" {
 		return c.Value, nil
@@ -404,72 +302,12 @@ func envOrInt(k string, def int) int {
 }
 
 func containsString(values []string, want string) bool {
-	for _, value := range values {
-		if value == want {
-			return true
-		}
-	}
-	return false
-}
-
-func (a *webApp) fetchOllamaModels() ([]string, error) {
-	base := strings.TrimRight(a.baseURL, "/")
-	base = strings.TrimSuffix(base, "/v1")
-	if base == "" {
-		return nil, fmt.Errorf("LLM_BASE_URL is empty")
-	}
-
-	req, err := http.NewRequest(http.MethodGet, base+"/api/tags", nil)
-	if err != nil {
-		return nil, err
-	}
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-	defer cancel()
-	req = req.WithContext(ctx)
-
-	resp, err := http.DefaultClient.Do(req)
-	if err != nil {
-		return nil, err
-	}
-	defer resp.Body.Close()
-	if resp.StatusCode >= 400 {
-		return nil, fmt.Errorf("ollama tags request failed: %s", resp.Status)
-	}
-
-	var payload struct {
-		Models []struct {
-			Name         string   `json:"name"`
-			Capabilities []string `json:"capabilities"`
-		} `json:"models"`
-	}
-	if err := json.NewDecoder(resp.Body).Decode(&payload); err != nil {
-		return nil, err
-	}
-
-	names := make([]string, 0, len(payload.Models))
-	for _, m := range payload.Models {
-		if m.Name == "" {
-			continue
-		}
-		if len(m.Capabilities) > 0 {
-			hasCompletion := false
-			hasTools := false
-			for _, cap := range m.Capabilities {
-				if cap == "completion" {
-					hasCompletion = true
-				}
-				if cap == "tools" {
-					hasTools = true
-				}
-			}
-			if !hasCompletion || !hasTools {
-				continue
-			}
-		}
-		names = append(names, m.Name)
-	}
-	sort.Strings(names)
-	return names, nil
+  for _, value := range values {
+    if value == want {
+      return true
+    }
+  }
+  return false
 }
 
 var pageTmpl = template.Must(template.New("page").Parse(`<!doctype html>

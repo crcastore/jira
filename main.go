@@ -7,8 +7,6 @@ import (
 	"os"
 	"strings"
 	"time"
-
-	openai "github.com/sashabaranov/go-openai"
 )
 
 const systemPrompt = `You are an engineering assistant for Jira and GitHub. You help the user search,
@@ -60,22 +58,21 @@ func runCLI() {
 		fmt.Fprintf(os.Stderr, "GitHub disabled: %v\n", gerr)
 	}
 
-	baseURL := envOr("LLM_BASE_URL", "http://localhost:11434/v1")
-	apiKey := firstNonEmpty(os.Getenv("LLM_API_KEY"), os.Getenv("OPENAI_API_KEY"), "ollama")
-	model := envOr("LLM_MODEL", "llama3.1:8b")
-
-	cfg := openai.DefaultConfig(apiKey)
-	cfg.BaseURL = baseURL
-	client := openai.NewClientWithConfig(cfg)
-
-	messages := []openai.ChatCompletionMessage{
-		{Role: openai.ChatMessageRoleSystem, Content: systemPrompt},
+	llmCfg := loadLLMConfig()
+	engine := newEngine(llmCfg, jc, gc)
+	onStepStart, onStepEnd := startSpinner("thinking")
+	engine.OnStepStart = onStepStart
+	engine.OnStepEnd = onStepEnd
+	engine.OnToolCall = func(name, args string) {
+		fmt.Printf("\033[2m→ %s(%s)\033[0m\n", name, args)
 	}
+	service := NewAgentChatService(engine, systemPrompt, llmCfg.model, nil)
+
 	ghStatus := "off"
 	if gc != nil {
 		ghStatus = "on"
 	}
-	fmt.Printf("Jira + GitHub agent (model: %s, github: %s) — type 'exit' to quit.\n\n", model, ghStatus)
+	fmt.Printf("Jira + GitHub agent (model: %s, github: %s) — type 'exit' to quit.\n\n", llmCfg.model, ghStatus)
 
 	in := bufio.NewReader(os.Stdin)
 	for {
@@ -93,87 +90,63 @@ func runCLI() {
 		case "exit", "quit", ":q":
 			return
 		}
-		messages = append(messages, openai.ChatCompletionMessage{
-			Role: openai.ChatMessageRoleUser, Content: user,
-		})
-		messages = runTurn(client, model, messages, jc, gc)
-	}
-}
 
-func runTurn(client *openai.Client, model string, messages []openai.ChatCompletionMessage, jc *JiraClient, gc *GitHubClient) []openai.ChatCompletionMessage {
-	ctx := context.Background()
-	for step := 0; step < maxSteps; step++ {
-		stopSpinner := startSpinner("thinking")
-		resp, err := client.CreateChatCompletion(ctx, openai.ChatCompletionRequest{
-			Model:      model,
-			Messages:   messages,
-			Tools:      ToolSchemas,
-			ToolChoice: "auto",
-		})
-		stopSpinner()
+		turn, err := service.RunTurn(context.Background(), "cli", user, "")
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "LLM error: %v\n", err)
-			return messages
+			continue
 		}
-		msg := resp.Choices[0].Message
-		messages = append(messages, openai.ChatCompletionMessage{
-			Role:      openai.ChatMessageRoleAssistant,
-			Content:   msg.Content,
-			ToolCalls: msg.ToolCalls,
-		})
-
-		if len(msg.ToolCalls) == 0 {
-			if msg.Content != "" {
-				fmt.Println(msg.Content)
-			}
-			return messages
-		}
-
-		for _, tc := range msg.ToolCalls {
-			args := tc.Function.Arguments
-			if args == "" {
-				args = "{}"
-			}
-			fmt.Printf("\033[2m→ %s(%s)\033[0m\n", tc.Function.Name, args)
-			result := CallTool(jc, gc, tc.Function.Name, args)
-			messages = append(messages, openai.ChatCompletionMessage{
-				Role:       openai.ChatMessageRoleTool,
-				ToolCallID: tc.ID,
-				Name:       tc.Function.Name,
-				Content:    result,
-			})
+		if turn.Reply != "" {
+			fmt.Println(turn.Reply)
 		}
 	}
-	fmt.Println("Step limit reached.")
-	return messages
 }
 
 // startSpinner prints an animated indicator with elapsed seconds until the
 // returned stop function is called. Output goes to stderr so it doesn't get
 // mixed into captured stdout.
-func startSpinner(label string) func() {
+func startSpinner(label string) (onStart func(), onEnd func()) {
 	if !isTerminal(os.Stderr) {
-		return func() {}
+		return func() {}, func() {}
 	}
-	done := make(chan struct{})
-	go func() {
-		frames := []rune{'⠋', '⠙', '⠹', '⠸', '⠼', '⠴', '⠦', '⠧', '⠇', '⠏'}
-		start := time.Now()
-		i := 0
-		t := time.NewTicker(120 * time.Millisecond)
-		defer t.Stop()
-		for {
-			select {
-			case <-done:
-				fmt.Fprint(os.Stderr, "\r\033[K")
-				return
-			case <-t.C:
-				fmt.Fprintf(os.Stderr, "\r\033[2m%c %s… %ds\033[0m", frames[i%len(frames)], label, int(time.Since(start).Seconds()))
-				i++
-			}
+	running := false
+	var done chan struct{}
+
+	startFn := func() {
+		if running {
+			return
 		}
-	}()
-	return func() { close(done) }
+		running = true
+		done = make(chan struct{})
+		localDone := done
+		go func() {
+			frames := []rune{'⠋', '⠙', '⠹', '⠸', '⠼', '⠴', '⠦', '⠧', '⠇', '⠏'}
+			start := time.Now()
+			i := 0
+			t := time.NewTicker(120 * time.Millisecond)
+			defer t.Stop()
+			for {
+				select {
+				case <-localDone:
+					fmt.Fprint(os.Stderr, "\r\033[K")
+					return
+				case <-t.C:
+					fmt.Fprintf(os.Stderr, "\r\033[2m%c %s… %ds\033[0m", frames[i%len(frames)], label, int(time.Since(start).Seconds()))
+					i++
+				}
+			}
+		}()
+	}
+
+	endFn := func() {
+		if !running {
+			return
+		}
+		running = false
+		close(done)
+	}
+
+	return startFn, endFn
 }
 
 func isTerminal(f *os.File) bool {
