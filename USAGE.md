@@ -59,9 +59,9 @@ Pick any tool-capable model; smaller models tend to hallucinate tool arguments.
 ### CLI mode
 
 ```bash
-go run .
+go run ./cmd/jira-agent
 # or build a binary
-go build -o jira-agent && ./jira-agent
+go build -o jira-agent ./cmd/jira-agent && ./jira-agent
 ```
 
 You'll get a `you>` prompt. Type requests in plain English; type `exit`,
@@ -71,7 +71,7 @@ with a spinner while the model thinks.
 ### Web mode (Go + HTMX)
 
 ```bash
-go run . serve
+go run ./cmd/jira-agent serve
 # or
 ./jira-agent serve
 ```

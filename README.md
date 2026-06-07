@@ -11,15 +11,15 @@ LLM is any OpenAI-compatible endpoint, so you can plug in:
 
 ```bash
 go mod tidy
-go run .
+go run ./cmd/jira-agent
 # or
-go build -o jira-agent && ./jira-agent
+go build -o jira-agent ./cmd/jira-agent && ./jira-agent
 ```
 
 ## Web UI (Go + HTMX)
 
 ```bash
-go run . serve
+go run ./cmd/jira-agent serve
 ```
 
 Then open `http://localhost:8080`.
