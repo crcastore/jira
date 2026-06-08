@@ -165,9 +165,9 @@ func TestWidgetShowsWorkingIndicator(t *testing.T) {
 	}
 	got := string(html)
 	for _, want := range []string{
-		`hx-indicator="closest .hx-chat find .hx-chat-working"`,
+		`hx-indicator="#chat-log-working"`,
 		`hx-disabled-elt="find input, find select, find button"`,
-		`class="hx-chat-working htmx-indicator"`,
+		`class="hx-chat-working htmx-indicator" id="chat-log-working"`,
 		`hx-chat-typing`,
 		`Working`,
 	} {

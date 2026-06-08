@@ -140,12 +140,12 @@ const widgetTmpl = `{{define "chat-widget"}}
   <div class="hx-chat-log" id="{{.LogID}}">
     <div class="hx-chat-bubble assistant">{{.Greeting}}</div>
   </div>
-  <div class="hx-chat-working htmx-indicator" aria-live="polite">
+  <div class="hx-chat-working htmx-indicator" id="{{.LogID}}-working" aria-live="polite">
     <span class="hx-chat-typing"><span></span><span></span><span></span></span>
     <span class="hx-chat-working-text">Working…</span>
   </div>
   <form class="hx-chat-form" hx-post="{{.Endpoint}}" hx-target="#{{.LogID}}" hx-swap="beforeend"
-      hx-indicator="closest .hx-chat find .hx-chat-working" hx-disabled-elt="find input, find select, find button">
+      hx-indicator="#{{.LogID}}-working" hx-disabled-elt="find input, find select, find button">
     {{if .Models}}
     <select name="model" aria-label="Model">
       {{$sel := .Model}}
