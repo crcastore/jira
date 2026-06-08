@@ -32,6 +32,8 @@ type ChatService interface {
 	AvailableModels(ctx context.Context) ([]string, error)
 	ResolveModel(ctx context.Context, requested string) string
 	RunTurn(ctx context.Context, sessionID, prompt, requestedModel string) (chat.Turn, error)
+	SetMaxContextTokens(maxTokens int)
+	CurrentTokenUsage(sessionID string) int
 }
 
 // AgentChatService is the default ChatService implementation backed by a
@@ -51,6 +53,25 @@ func NewAgentChatService(engine *chat.Engine, systemPrompt, defaultModel string,
 		defaultModel: defaultModel,
 		catalog:      catalog,
 	}
+}
+
+// WithTokenLimit configures Ollama-based token limiting for conversation history.
+// ollamaURL should be like "http://localhost:11434"
+// model should match the model you're using (e.g., "mistral")
+// maxTokens is the maximum context tokens to keep (e.g., 4000)
+func (s *AgentChatService) WithTokenLimit(ollamaURL, model string, maxTokens int) *AgentChatService {
+	s.sessions.WithOllamaTokenLimit(ollamaURL, model, maxTokens)
+	return s
+}
+
+// SetMaxContextTokens updates the token limit at runtime.
+func (s *AgentChatService) SetMaxContextTokens(maxTokens int) {
+	s.sessions.SetMaxContextTokens(maxTokens)
+}
+
+// CurrentTokenUsage returns the current token count for a session.
+func (s *AgentChatService) CurrentTokenUsage(sessionID string) int {
+	return s.sessions.CurrentTokenUsage(sessionID)
 }
 
 // DefaultModel returns the configured fallback model name.
