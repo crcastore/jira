@@ -45,7 +45,7 @@ func (f fakeChatService) CurrentTokenUsage(string) int { return 0 }
 func (f fakeChatService) ResetSession(string) {}
 
 func TestHandleIndexRendersPage(t *testing.T) {
-	app := &webApp{chat: fakeChatService{defaultModel: "llama", models: []string{"llama", "qwen"}}, llmTimeout: 5 * time.Second}
+	app := &webApp{chat: fakeChatService{defaultModel: "llama", models: []string{"llama", "qwen"}}, llmTimeout: 5 * time.Second, maxContextTokens: 1234}
 	req := httptest.NewRequest(http.MethodGet, "/", nil)
 	rr := httptest.NewRecorder()
 
@@ -57,6 +57,9 @@ func TestHandleIndexRendersPage(t *testing.T) {
 	body := rr.Body.String()
 	if !strings.Contains(body, "Jira + GitHub Agent") || !strings.Contains(body, "hx-chat") {
 		t.Fatalf("unexpected body: %s", body)
+	}
+	if !strings.Contains(body, `value="1234"`) {
+		t.Fatalf("expected configured token limit in page, got: %s", body)
 	}
 }
 

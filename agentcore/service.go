@@ -132,6 +132,9 @@ func (s *AgentChatService) RunTurn(ctx context.Context, sessionID, prompt, reque
 	history := s.sessions.Get(sessionID)
 	model := s.ResolveModel(ctx, requestedModel)
 	turn, next, err := s.engine.Run(ctx, history, prompt, model)
+	if err != nil {
+		return turn, err
+	}
 	s.sessions.Set(sessionID, next)
 	return turn, err
 }

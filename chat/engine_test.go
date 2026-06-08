@@ -373,3 +373,22 @@ func TestSessionStoreSeedsAndPersists(t *testing.T) {
 		t.Fatalf("Set did not persist: len=%d want 2", len(got))
 	}
 }
+
+func TestSessionStoreTrimsToNewestMessages(t *testing.T) {
+	store := NewSessionStore("sys")
+	store.SetMaxContextTokens(5)
+	store.Set("abc", []openai.ChatCompletionMessage{
+		{Role: openai.ChatMessageRoleSystem, Content: "sys"},
+		{Role: openai.ChatMessageRoleUser, Content: "aaaa"},
+		{Role: openai.ChatMessageRoleAssistant, Content: "bbbb"},
+		{Role: openai.ChatMessageRoleUser, Content: "cccc"},
+	})
+
+	got := store.Get("abc")
+	if len(got) != 3 {
+		t.Fatalf("trimmed history length: got %d want 3 (%+v)", len(got), got)
+	}
+	if got[0].Content != "sys" || got[1].Content != "bbbb" || got[2].Content != "cccc" {
+		t.Fatalf("trimmed history kept wrong messages: %+v", got)
+	}
+}

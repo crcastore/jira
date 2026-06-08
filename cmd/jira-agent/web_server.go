@@ -23,6 +23,8 @@ type webApp struct {
 	maxContextTokens int
 }
 
+const defaultWebMaxContextTokens = 4000
+
 func serveWeb() {
 	loadDotEnv(".env")
 
@@ -45,8 +47,8 @@ func serveWeb() {
 	catalog := agentcore.NewOllamaModelCatalog(cfg.baseURL, http.DefaultClient)
 	chatSvc := agentcore.NewAgentChatService(engine, systemPrompt, cfg.model, catalog)
 
-	// Configure token limiting (default 4000, can be adjusted via API)
-	maxTokens := envOrInt("WEB_MAX_CONTEXT_TOKENS", 4000)
+	// Configure token limiting (can be adjusted via API).
+	maxTokens := envOrInt("WEB_MAX_CONTEXT_TOKENS", defaultWebMaxContextTokens)
 	chatSvc.WithTokenLimit(cfg.baseURL, cfg.model, maxTokens)
 
 	app := &webApp{
@@ -101,10 +103,11 @@ func (a *webApp) handleIndex(w http.ResponseWriter, r *http.Request) {
 	}
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
 	_ = pageTmpl.Execute(w, map[string]any{
-		"Model":       a.chat.DefaultModel(),
-		"GitHubReady": a.gc != nil,
-		"ChatStyles":  chatui.StyleTag(),
-		"ChatWidget":  widget,
+		"Model":            a.chat.DefaultModel(),
+		"GitHubReady":      a.gc != nil,
+		"ChatStyles":       chatui.StyleTag(),
+		"ChatWidget":       widget,
+		"MaxContextTokens": a.currentMaxContextTokens(),
 	})
 }
 
@@ -155,9 +158,16 @@ func (a *webApp) tokenLimitHandler() http.Handler {
 	return chathttp.TokenLimitHandler{
 		Service:      a.chat,
 		SessionID:    a.ensureSession,
-		CurrentLimit: func() int { return a.maxContextTokens },
+		CurrentLimit: func() int { return a.currentMaxContextTokens() },
 		SetLimit:     func(maxTokens int) { a.maxContextTokens = maxTokens },
 	}
+}
+
+func (a *webApp) currentMaxContextTokens() int {
+	if a.maxContextTokens > 0 {
+		return a.maxContextTokens
+	}
+	return defaultWebMaxContextTokens
 }
 
 // friendlyLLMError turns a raw LLM transport error into actionable guidance.

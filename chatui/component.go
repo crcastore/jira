@@ -140,7 +140,7 @@ const widgetTmpl = `{{define "chat-widget"}}
   <div class="hx-chat-log" id="{{.LogID}}">
     <div class="hx-chat-bubble assistant">{{.Greeting}}</div>
   </div>
-  <div class="hx-chat-working htmx-indicator" id="{{.LogID}}-working" aria-live="polite">
+  <div class="hx-chat-working htmx-indicator" id="{{.LogID}}-working" role="status" aria-live="polite">
     <span class="hx-chat-typing"><span></span><span></span><span></span></span>
     <span class="hx-chat-working-text">Working…</span>
   </div>
@@ -168,6 +168,26 @@ const widgetTmpl = `{{define "chat-widget"}}
     var form = widget ? widget.querySelector(".hx-chat-form") : null;
     var input = form ? form.querySelector('input[name="prompt"]') : null;
     var reset = form ? form.querySelector(".hx-chat-reset") : null;
+    var working = widget ? widget.querySelector(".hx-chat-working") : null;
+    function isFormEvent(e){
+      return form && (e.target === form || (e.detail && e.detail.elt === form));
+    }
+    function clearBusy(){
+      if(form){
+        form.classList.remove("htmx-request");
+        form.setAttribute("aria-busy", "false");
+        form.querySelectorAll("input, select, button").forEach(function(el){ el.disabled = false; });
+      }
+      if(working){ working.classList.remove("htmx-request"); }
+      log.setAttribute("aria-busy", "false");
+    }
+    function appendNotice(message){
+      var bubble = document.createElement("div");
+      bubble.className = "hx-chat-bubble assistant hx-chat-error";
+      bubble.textContent = message;
+      log.appendChild(bubble);
+      log.scrollTop = log.scrollHeight;
+    }
     function restoreGreeting(){
       log.replaceChildren();
       var bubble = document.createElement("div");
@@ -178,10 +198,7 @@ const widgetTmpl = `{{define "chat-widget"}}
     if(reset){
       reset.addEventListener("click", function(){
         if(window.htmx && form){ htmx.trigger(form, "htmx:abort"); }
-        if(form){
-          form.classList.remove("htmx-request");
-          form.querySelectorAll("input, select, button").forEach(function(el){ el.disabled = false; });
-        }
+        clearBusy();
         fetch(reset.dataset.endpoint, {method: "POST"}).catch(function(){}).finally(function(){
           restoreGreeting();
           if(input){ input.value = ""; input.focus(); }
@@ -194,6 +211,26 @@ const widgetTmpl = `{{define "chat-widget"}}
         log.scrollTop = log.scrollHeight;
         if(input){ input.value = ""; input.focus(); }
       }
+    });
+    document.body.addEventListener("htmx:beforeRequest", function(e){
+      if(isFormEvent(e)){
+        form.setAttribute("aria-busy", "true");
+        log.setAttribute("aria-busy", "true");
+      }
+    });
+    document.body.addEventListener("htmx:afterRequest", function(e){
+      if(isFormEvent(e)){ clearBusy(); }
+    });
+    document.body.addEventListener("htmx:responseError", function(e){
+      if(isFormEvent(e)){
+        var xhr = e.detail ? e.detail.xhr : null;
+        var status = xhr ? String(xhr.status || "") : "";
+        var statusText = xhr && xhr.statusText ? " " + xhr.statusText : "";
+        appendNotice("Chat request failed" + (status ? ": " + status + statusText : "."));
+      }
+    });
+    document.body.addEventListener("htmx:sendError", function(e){
+      if(isFormEvent(e)){ appendNotice("Could not reach the chat server."); }
     });
   })();
   </script>
@@ -250,6 +287,10 @@ const componentCSS = `
 }
 .hx-chat-bubble.assistant {
   background: var(--hxc-bubble-assistant, #fff7ed);
+}
+.hx-chat-bubble.hx-chat-error {
+  border-color: var(--hxc-error, #9f1239);
+  color: var(--hxc-error, #9f1239);
 }
 .hx-chat-tools {
   margin-top: 8px;

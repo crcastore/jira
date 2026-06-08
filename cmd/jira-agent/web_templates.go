@@ -157,7 +157,7 @@ var pageTmpl = template.Must(template.New("page").Parse(`<!doctype html>
       <div class="token-controls">
         <span>Tokens:</span>
         <span id="token-display">--</span>
-        <input type="number" id="token-input" value="4000" min="100" max="32000">
+        <input type="number" id="token-input" value="{{.MaxContextTokens}}" min="100" max="32000">
         <button type="button" id="token-btn">Set Limit</button>
       </div>
     </section>

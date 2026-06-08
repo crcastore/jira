@@ -125,6 +125,31 @@ func TestAgentChatServiceRunTurnPersistsHistory(t *testing.T) {
 	}
 }
 
+func TestAgentChatServiceRunTurnDoesNotPersistFailedHistory(t *testing.T) {
+	llm := &scriptedLLM{}
+	engine := &chat.Engine{LLM: llm, Tools: fakeToolBox{}, DefaultModel: "base", MaxSteps: 3}
+	svc := NewAgentChatService(engine, "sys", "base", nil)
+
+	if _, err := svc.RunTurn(context.Background(), "sid", "failed", ""); err == nil {
+		t.Fatal("expected first turn to fail")
+	}
+
+	llm.responses = []openai.ChatCompletionResponse{assistantText("recovered")}
+	turn, err := svc.RunTurn(context.Background(), "sid", "retry", "")
+	if err != nil {
+		t.Fatalf("retry error: %v", err)
+	}
+	if turn.Reply != "recovered" {
+		t.Fatalf("retry reply: got %q", turn.Reply)
+	}
+	if len(llm.seenLens) != 2 {
+		t.Fatalf("expected 2 LLM attempts, got %d", len(llm.seenLens))
+	}
+	if llm.seenLens[1] != 2 {
+		t.Fatalf("failed prompt persisted into retry: second request messages=%d want 2", llm.seenLens[1])
+	}
+}
+
 func TestAgentChatServiceAvailableModelsFallbackOnEmptyCatalog(t *testing.T) {
 	svc := NewAgentChatService(
 		&chat.Engine{LLM: &scriptedLLM{responses: []openai.ChatCompletionResponse{assistantText("ok")}}, Tools: fakeToolBox{}, DefaultModel: "base", MaxSteps: 3},

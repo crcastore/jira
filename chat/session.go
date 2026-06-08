@@ -112,26 +112,19 @@ func (s *SessionStore) trimToTokenLimit(msgs []openai.ChatCompletionMessage) []o
 		return msgs
 	}
 
-	// Always keep system prompt
-	result := []openai.ChatCompletionMessage{msgs[0]}
-
-	// Add messages from newest backwards (most recent = most valuable to keep)
+	start := len(msgs)
 	for i := len(msgs) - 1; i >= 1; i-- {
-		candidate := append([]openai.ChatCompletionMessage{msgs[0]}, msgs[i])
-		tokens := s.countHistoryTokens(candidate)
-
-		// Check if we can fit this message + already-kept messages
-		testCandidate := []openai.ChatCompletionMessage{msgs[0]}
-		testCandidate = append(testCandidate, msgs[i:]...)
-		tokens = s.countHistoryTokens(testCandidate)
-
-		if tokens <= s.maxContextTokens {
-			result = testCandidate
-		} else {
+		candidate := append([]openai.ChatCompletionMessage{msgs[0]}, msgs[i:]...)
+		if s.countHistoryTokens(candidate) > s.maxContextTokens {
 			break
 		}
+		start = i
 	}
 
+	result := []openai.ChatCompletionMessage{msgs[0]}
+	if start < len(msgs) {
+		result = append(result, msgs[start:]...)
+	}
 	return result
 }
 

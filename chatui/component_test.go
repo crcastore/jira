@@ -167,7 +167,7 @@ func TestWidgetShowsWorkingIndicator(t *testing.T) {
 	for _, want := range []string{
 		`hx-indicator="#chat-log-working"`,
 		`hx-disabled-elt="find input, find select, find button"`,
-		`class="hx-chat-working htmx-indicator" id="chat-log-working"`,
+		`class="hx-chat-working htmx-indicator" id="chat-log-working" role="status"`,
 		`hx-chat-typing`,
 		`Working`,
 	} {
@@ -185,5 +185,32 @@ func TestWorkingIndicatorIsHiddenByDefault(t *testing.T) {
 	}
 	if !strings.Contains(css, ".hx-chat-working.htmx-request {") {
 		t.Errorf("expected a rule to reveal the indicator during a request")
+	}
+}
+
+func TestWidgetHandlesRequestFailures(t *testing.T) {
+	c := New()
+	html, err := c.Widget(WidgetData{Endpoint: "/chat"})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	got := string(html)
+	for _, want := range []string{
+		`function clearBusy()`,
+		`working.classList.remove("htmx-request")`,
+		`htmx:responseError`,
+		`Chat request failed`,
+		`htmx:sendError`,
+		`Could not reach the chat server.`,
+		`hx-chat-error`,
+	} {
+		if !strings.Contains(got, want) {
+			t.Errorf("widget missing failure handling %q\n---\n%s", want, got)
+		}
+	}
+
+	css := string(CSS())
+	if !strings.Contains(css, ".hx-chat-bubble.hx-chat-error {") {
+		t.Errorf("expected error bubble styling")
 	}
 }
