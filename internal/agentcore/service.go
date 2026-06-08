@@ -34,6 +34,7 @@ type ChatService interface {
 	RunTurn(ctx context.Context, sessionID, prompt, requestedModel string) (chat.Turn, error)
 	SetMaxContextTokens(maxTokens int)
 	CurrentTokenUsage(sessionID string) int
+	ResetSession(sessionID string)
 }
 
 // AgentChatService is the default ChatService implementation backed by a
@@ -72,6 +73,11 @@ func (s *AgentChatService) SetMaxContextTokens(maxTokens int) {
 // CurrentTokenUsage returns the current token count for a session.
 func (s *AgentChatService) CurrentTokenUsage(sessionID string) int {
 	return s.sessions.CurrentTokenUsage(sessionID)
+}
+
+// ResetSession clears the conversation history for the given session ID.
+func (s *AgentChatService) ResetSession(sessionID string) {
+	s.sessions.Reset(sessionID)
 }
 
 // DefaultModel returns the configured fallback model name.

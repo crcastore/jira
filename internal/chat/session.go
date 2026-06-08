@@ -141,3 +141,12 @@ func (s *SessionStore) Set(id string, msgs []openai.ChatCompletionMessage) {
 	defer s.mu.Unlock()
 	s.sessions[id] = append([]openai.ChatCompletionMessage(nil), msgs...)
 }
+
+// Reset clears the conversation history for id, keeping only the system prompt.
+func (s *SessionStore) Reset(id string) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.sessions[id] = []openai.ChatCompletionMessage{
+		{Role: openai.ChatMessageRoleSystem, Content: s.systemPrompt},
+	}
+}
