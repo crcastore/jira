@@ -1,130 +1,117 @@
 # Jira + GitHub Agent (Go)
 
-CLI agent that talks to **Jira Cloud** and **GitHub** in natural language. The
-LLM is any OpenAI-compatible endpoint, so you can plug in:
+A Go CLI and HTMX web app for working with Jira Cloud and a focused GitHub issue workflow through an OpenAI-compatible tool-calling model.
 
-- **Ollama** (local, free) — e.g. `llama3.1`, `qwen2.5` (needs a tool-calling model)
-- **OpenAI** (`gpt-4o-mini`, etc.)
-- **Groq**, **OpenRouter**, **Together**, or anything else exposing `/v1/chat/completions` with tool calling
+The current model-visible tool set is intentionally small: GitHub identity, repository discovery, issue listing, issue lookup, issue creation, issue closing, and issue comments. The removed Jira, pull request, search, and workflow schemas are archived in [REMOVED_TOOLS.md](REMOVED_TOOLS.md) and can be restored in [cmd/jira-agent/tools.go](cmd/jira-agent/tools.go).
 
-## Build & run
+## Build & Run
 
 ```bash
 go mod tidy
 go run ./cmd/jira-agent
+
 # or
-go build -o jira-agent ./cmd/jira-agent && ./jira-agent
+go build -o jira-agent ./cmd/jira-agent
+./jira-agent
 ```
 
-## Web UI (Go + HTMX)
+## Web UI
 
 ```bash
 go run ./cmd/jira-agent serve
 ```
 
-Then open `http://localhost:8080`.
+Then open <http://localhost:8080>.
 
-What the page shows:
-- Chat box powered by the same Jira/GitHub tool-calling agent
-- Available GitHub repositories (from `gh_list_my_repos` equivalent data)
-- Your open Jira issues (`assignee = currentUser() AND statusCategory != Done`)
+The page includes:
+
+- A chat box backed by the shared agent engine
+- A model picker populated from Ollama's `/api/tags` when available
+- Available GitHub repositories when `GITHUB_TOKEN` is configured
+- Your open Jira issues from `assignee = currentUser() AND statusCategory != Done`
 
 ## Configuration
 
-Copy `.env.example` to `.env` and fill it in (or export real env vars):
+Copy `.env.example` to `.env` and fill it in, or export the same variables in your shell.
 
 ```env
 JIRA_BASE_URL=https://your-domain.atlassian.net
 JIRA_EMAIL=you@example.com
 JIRA_API_TOKEN=...
 
-# Optional — enables the gh_* tools. Classic token with `repo` scope,
-# or fine-grained with Issues + Pull requests read/write.
+# Required for the exposed gh_* chat tools.
 GITHUB_TOKEN=ghp_...
 # GITHUB_API_URL=https://github.example.com/api/v3   # GHES only
 
-# Defaults to local Ollama:
+# Defaults to local Ollama.
 LLM_BASE_URL=http://localhost:11434/v1
 LLM_API_KEY=ollama
 LLM_MODEL=llama3.1:8b
 WEB_LLM_TIMEOUT_SEC=180
-# set to 0 to disable timeout for web chat requests
 
-# Or OpenAI:
-# LLM_BASE_URL=https://api.openai.com/v1
-# LLM_API_KEY=sk-...
-# LLM_MODEL=gpt-4o-mini
-# WEB_LLM_TIMEOUT_SEC=180
+# Optional web settings.
+WEB_ADDR=:8080
+WEB_MAX_CONTEXT_TOKENS=4000
 ```
 
-Get a Jira API token: <https://id.atlassian.com/manage-profile/security/api-tokens>
+Get a Jira API token at <https://id.atlassian.com/manage-profile/security/api-tokens>.
 
-### Using Ollama (default)
+### Ollama
 
 ```bash
 ollama serve
-Jira:
-- `what issues are assigned to me and not done?`
-- `show me ABC-123`
-- `comment on ABC-123 saying "merged, ready for QA"`
-- `move ABC-123 to In Review`
-- `create a Bug in project ABC titled "Login button misaligned on Safari"`
-- `assign ABC-123 to Maria Lopez`
+ollama pull llama3.1:8b
+```
 
-GitHub:
-- `list my open PRs across all repos`
-- `show me PR #42 in owner/repo and the files it touches`
-- `open a PR from feature/foo into main on owner/repo titled "Add foo"`
-- `comment on issue #17 in owner/repo: "looking into this today"`
-- `approve PR #42 in owner/repo with body "LGTM"`
-- `close issue #5 in owner/repoe and not done?`
-- `show me ABC-123`
-- `comment on ABC-123 saying "merged, ready for QA"`
-- `move ABC-123 to In Review`
-- `create a Bug in proje.
+Use a model that supports tool calling. Local model quality varies; `llama3.1:8b` and `qwen2.5` are good starting points.
 
-**Jira**
+## Example Prompts
 
-| Tool | Purpose |
-| --- | --- |
-| `search_issues` | JQL search |
-| `get_issue` | Read one issue |
-| `create_issue` | New issue in a project |
-| `add_comment` | Comment on an issue |
-| `list_transitions` / `transition_issue` | Change status |
-| `update_issue_fields` | Generic field edit |
-| `search_users` | Resolve a name/email to an accountId |
-| `list_projects`, `myself` | Discovery |
+- `who am I on GitHub?`
+- `list my repos sorted by recently pushed`
+- `show open issues in owner/repo`
+- `show issue #17 in owner/repo`
+- `create an issue in owner/repo titled "Fix flaky login test" with label bug`
+- `comment on issue #17 in owner/repo saying "looking into this today"`
+- `close issue #17 in owner/repo`
 
-**GitHub** (enabled when `GITHUB_TOKEN` is set)
+## Exposed Tools
 
 | Tool | Purpose |
 | --- | --- |
 | `gh_me` | Authenticated GitHub user |
-| `gh_list_my_repos` / `gh_get_repo` / `gh_search_repos` | Repository discovery |
-| `gh_list_issues` / `gh_get_issue` | Read issues |
-| `gh_create_issue` / `gh_update_issue` / `gh_close_issue` | Write issues |
+| `gh_list_my_repos` | List repositories for the authenticated user |
+| `gh_get_repo` | Read repository metadata |
+| `gh_list_issues` | List repository issues, including PRs returned by the issues API |
+| `gh_get_issue` | Read one issue or PR by number |
+| `gh_create_issue` | Open a GitHub issue |
+| `gh_close_issue` | Close a GitHub issue |
 | `gh_comment_issue` | Comment on an issue or PR |
-| `gh_search_issues` | Global issue/PR search syntax |
-| `gh_list_pulls` / `gh_get_pull` / `gh_list_pr_files` | Read PRs |
-| `gh_create_pull` / `gh_merge_pull` / `gh_review_pull` | Write PRs |
 
-## Files
+## Project Layout
 
-| File | Purpose |
+| Path | Purpose |
 | --- | --- |
-| [main.go](main.go) | CLI loop, LLM wiring, tool-call dispatch |
-| [jira.go](jira.go) | Jira Cloud REST v3 client |
-| [github.go](github.go) | GitHub REST v3 client
+| [cmd/jira-agent/main.go](cmd/jira-agent/main.go) | CLI entry point and system prompt |
+| [cmd/jira-agent/agent.go](cmd/jira-agent/agent.go) | Shared env, LLM, and engine wiring |
+| [cmd/jira-agent/tools.go](cmd/jira-agent/tools.go) | Model-visible tool schemas and dispatcher |
+| [cmd/jira-agent/web_server.go](cmd/jira-agent/web_server.go) | HTTP route wiring |
+| [cmd/jira-agent/web_templates.go](cmd/jira-agent/web_templates.go) | Dashboard shell and side-panel templates |
+| [cmd/jira-agent/jira.go](cmd/jira-agent/jira.go) | Jira Cloud REST v3 client |
+| [cmd/jira-agent/github.go](cmd/jira-agent/github.go) | GitHub REST v3 client |
+| [agentcore/](agentcore/) | Transport-agnostic chat service and model catalog |
+| [chat/](chat/) | Tool-calling chat engine and session store |
+| [chathttp/](chathttp/) | Reusable HTMX chat, reset, and token-limit handlers |
+| [chatui/](chatui/) | Drop-in HTMX chat widget |
 
-| File | Purpose |
-| --- | --- |
-| [main.go](main.go) | CLI loop, LLM wiring, tool-call dispatch |
-| [jira.go](jira.go) | Jira Cloud REST v3 client (basic auth) |
-| [tools.go](tools.go) | OpenAI tool schemas + dispatcher |
+## Test
+
+```bash
+go test ./...
+```
 
 ## Notes
 
-- Uses Jira REST API **v3** (Cloud). Self-hosted Data Center needs v2 + different auth — easy to swap in [jira.go](jira.go).
-- Local Ollama models vary in tool-calling quality. `llama3.1:8b` and `qwen2.5` work well; smaller models often hallucinate arguments.
-- Credentials live in `.env` (gitignored). The agent never sends them to the LLM.
+- Credentials live in `.env`, which is gitignored.
+- The app uses Jira REST API v3 for Jira Cloud. Jira credentials are still needed for the current dashboard panels.
+- `CallTool` still contains the removed dispatch paths for easy restoration, but only schemas in `ToolSchemas` are advertised to the model.

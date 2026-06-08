@@ -3,6 +3,8 @@ package chatui
 import (
 	"strings"
 	"testing"
+
+	corechat "github.com/ccastorena/jira-agent/chat"
 )
 
 func TestWidgetRendersFormAndEndpoint(t *testing.T) {
@@ -75,6 +77,25 @@ func TestWidgetWithoutModelsUsesHiddenInput(t *testing.T) {
 	}
 }
 
+func TestWidgetWithResetEndpointRendersResetButton(t *testing.T) {
+	c := New()
+	html, err := c.Widget(WidgetData{Endpoint: "/chat", ResetEndpoint: "/api/reset"})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	got := string(html)
+	for _, want := range []string{
+		`class="hx-chat-reset"`,
+		`data-endpoint="/api/reset"`,
+		`hx-chat:reset`,
+		`>Reset</button>`,
+	} {
+		if !strings.Contains(got, want) {
+			t.Errorf("reset widget missing %q\n---\n%s", want, got)
+		}
+	}
+}
+
 func TestChunkRendersBubblesAndTools(t *testing.T) {
 	c := New()
 	html, err := c.Chunk(Turn{
@@ -113,6 +134,19 @@ func TestChunkEscapesUserInput(t *testing.T) {
 	}
 }
 
+func TestFromChatTurnAdaptsCoreTurn(t *testing.T) {
+	turn := FromChatTurn("hello", corechat.Turn{
+		Reply:  "done",
+		Events: []corechat.ToolEvent{{Name: "search", Args: `{}`, Result: "ok"}},
+	})
+	if turn.Prompt != "hello" || turn.Assistant != "done" {
+		t.Fatalf("unexpected turn text: %+v", turn)
+	}
+	if len(turn.Events) != 1 || turn.Events[0].Name != "search" || turn.Events[0].Result != "ok" {
+		t.Fatalf("unexpected events: %+v", turn.Events)
+	}
+}
+
 func TestStyleTagIsScoped(t *testing.T) {
 	style := string(StyleTag())
 	if !strings.HasPrefix(style, "<style>") || !strings.HasSuffix(style, "</style>") {
@@ -132,7 +166,7 @@ func TestWidgetShowsWorkingIndicator(t *testing.T) {
 	got := string(html)
 	for _, want := range []string{
 		`hx-indicator="closest .hx-chat find .hx-chat-working"`,
-		`hx-disabled-elt="find button"`,
+		`hx-disabled-elt="find input, find select, find button"`,
 		`class="hx-chat-working htmx-indicator"`,
 		`hx-chat-typing`,
 		`Working`,

@@ -9,6 +9,8 @@ import (
 	"bytes"
 	"html/template"
 	"io"
+
+	corechat "github.com/ccastorena/jira-agent/chat"
 )
 
 // Event is a single tool invocation surfaced in the transcript.
@@ -42,6 +44,14 @@ type WidgetData struct {
 	Models []string
 	// ModelsErr, when set, renders a small note under the form.
 	ModelsErr string
+	// SubmitLabel is the submit button text. Defaults to "Send".
+	SubmitLabel string
+	// ResetEndpoint, when set, renders a reset button that POSTs to the endpoint
+	// and restores the greeting bubble.
+	ResetEndpoint string
+	// ResetLabel is the reset button text. Defaults to "Reset" when a reset
+	// endpoint is configured.
+	ResetLabel string
 }
 
 func (d *WidgetData) applyDefaults() {
@@ -53,6 +63,12 @@ func (d *WidgetData) applyDefaults() {
 	}
 	if d.Placeholder == "" {
 		d.Placeholder = "Type a message..."
+	}
+	if d.SubmitLabel == "" {
+		d.SubmitLabel = "Send"
+	}
+	if d.ResetEndpoint != "" && d.ResetLabel == "" {
+		d.ResetLabel = "Reset"
 	}
 }
 
@@ -97,6 +113,16 @@ func (c *Component) Chunk(t Turn) (template.HTML, error) {
 	return template.HTML(buf.String()), nil
 }
 
+// FromChatTurn adapts the core chat engine turn into the UI turn expected by
+// RenderChunk. This keeps HTTP handlers from repeating event-mapping code.
+func FromChatTurn(prompt string, t corechat.Turn) Turn {
+	events := make([]Event, 0, len(t.Events))
+	for _, event := range t.Events {
+		events = append(events, Event{Name: event.Name, Args: event.Args, Result: event.Result})
+	}
+	return Turn{Prompt: prompt, Assistant: t.Reply, Events: events}
+}
+
 // StyleTag returns the component's scoped CSS wrapped in a <style> tag, ready to
 // drop into a host page's <head>.
 func StyleTag() template.HTML {
@@ -119,7 +145,7 @@ const widgetTmpl = `{{define "chat-widget"}}
     <span class="hx-chat-working-text">Working…</span>
   </div>
   <form class="hx-chat-form" hx-post="{{.Endpoint}}" hx-target="#{{.LogID}}" hx-swap="beforeend"
-        hx-indicator="closest .hx-chat find .hx-chat-working" hx-disabled-elt="find button">
+      hx-indicator="closest .hx-chat find .hx-chat-working" hx-disabled-elt="find input, find select, find button">
     {{if .Models}}
     <select name="model" aria-label="Model">
       {{$sel := .Model}}
@@ -129,7 +155,8 @@ const widgetTmpl = `{{define "chat-widget"}}
     <input type="hidden" name="model" value="{{.Model}}">
     {{end}}
     <input class="hx-chat-input" name="prompt" type="text" placeholder="{{.Placeholder}}" autocomplete="off" required>
-    <button type="submit">Send</button>
+    {{if .ResetEndpoint}}<button type="button" class="hx-chat-reset" data-endpoint="{{.ResetEndpoint}}">{{.ResetLabel}}</button>{{end}}
+    <button type="submit">{{.SubmitLabel}}</button>
   </form>
   {{if .ModelsErr}}<div class="hx-chat-note">Model list unavailable: {{.ModelsErr}}</div>{{end}}
   <script>
@@ -140,6 +167,28 @@ const widgetTmpl = `{{define "chat-widget"}}
     var widget = log.closest(".hx-chat");
     var form = widget ? widget.querySelector(".hx-chat-form") : null;
     var input = form ? form.querySelector('input[name="prompt"]') : null;
+    var reset = form ? form.querySelector(".hx-chat-reset") : null;
+    function restoreGreeting(){
+      log.replaceChildren();
+      var bubble = document.createElement("div");
+      bubble.className = "hx-chat-bubble assistant";
+      bubble.textContent = {{.Greeting}};
+      log.appendChild(bubble);
+    }
+    if(reset){
+      reset.addEventListener("click", function(){
+        if(window.htmx && form){ htmx.trigger(form, "htmx:abort"); }
+        if(form){
+          form.classList.remove("htmx-request");
+          form.querySelectorAll("input, select, button").forEach(function(el){ el.disabled = false; });
+        }
+        fetch(reset.dataset.endpoint, {method: "POST"}).catch(function(){}).finally(function(){
+          restoreGreeting();
+          if(input){ input.value = ""; input.focus(); }
+          document.body.dispatchEvent(new CustomEvent("hx-chat:reset", {detail: {log: log, form: form}}));
+        });
+      });
+    }
     document.body.addEventListener("htmx:afterSwap", function(e){
       if(e.target && e.target.id === {{.LogID}}){
         log.scrollTop = log.scrollHeight;
@@ -224,8 +273,8 @@ const componentCSS = `
   color: #111827;
 }
 .hx-chat-form {
-  display: grid;
-  grid-template-columns: auto 1fr auto;
+  display: flex;
+  align-items: center;
   gap: 10px;
   padding: 12px;
   border-top: 1px solid var(--hxc-border, #d1d5db);
@@ -240,7 +289,10 @@ const componentCSS = `
   background: #fff;
 }
 .hx-chat-form select { min-width: 180px; }
-.hx-chat-form .hx-chat-input { width: 100%; }
+.hx-chat-form .hx-chat-input {
+  flex: 1;
+  min-width: 0;
+}
 .hx-chat-form button {
   border: 0;
   border-radius: 10px;
@@ -249,6 +301,9 @@ const componentCSS = `
   font-weight: 600;
   padding: 10px 14px;
   cursor: pointer;
+}
+.hx-chat-form .hx-chat-reset {
+  background: var(--hxc-reset, #374151);
 }
 .hx-chat-note {
   font-size: 12px;
@@ -294,7 +349,20 @@ const componentCSS = `
   opacity: 0.6;
   cursor: progress;
 }
+.hx-chat-form input:disabled,
+.hx-chat-form select:disabled,
+.hx-chat-form button:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+}
 @media (max-width: 680px) {
-  .hx-chat-form { grid-template-columns: 1fr; }
+  .hx-chat-form {
+    flex-direction: column;
+    align-items: stretch;
+  }
+  .hx-chat-form select {
+    min-width: 0;
+    width: 100%;
+  }
 }
 `

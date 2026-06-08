@@ -7,7 +7,7 @@ import (
 
 	openai "github.com/sashabaranov/go-openai"
 
-	"github.com/ccastorena/jira-agent/internal/chat"
+	"github.com/ccastorena/jira-agent/chat"
 )
 
 type fakeCatalog struct {

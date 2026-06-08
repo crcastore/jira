@@ -10,12 +10,12 @@ import (
 // concurrent use. New sessions are seeded with the configured system prompt.
 // If MaxContextTokens > 0, history is trimmed to stay within that limit.
 type SessionStore struct {
-	mu                 sync.Mutex
-	systemPrompt       string
-	sessions           map[string][]openai.ChatCompletionMessage
-	ollamaURL          string
-	model              string
-	maxContextTokens   int
+	mu               sync.Mutex
+	systemPrompt     string
+	sessions         map[string][]openai.ChatCompletionMessage
+	ollamaURL        string
+	model            string
+	maxContextTokens int
 }
 
 // NewSessionStore returns a store that seeds every new session with the given
@@ -52,7 +52,7 @@ func (s *SessionStore) SetMaxContextTokens(maxTokens int) {
 func (s *SessionStore) CurrentTokenUsage(id string) int {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	
+
 	msgs, ok := s.sessions[id]
 	if !ok {
 		return s.countTokens(s.systemPrompt)
@@ -114,24 +114,24 @@ func (s *SessionStore) trimToTokenLimit(msgs []openai.ChatCompletionMessage) []o
 
 	// Always keep system prompt
 	result := []openai.ChatCompletionMessage{msgs[0]}
-	
+
 	// Add messages from newest backwards (most recent = most valuable to keep)
 	for i := len(msgs) - 1; i >= 1; i-- {
 		candidate := append([]openai.ChatCompletionMessage{msgs[0]}, msgs[i])
 		tokens := s.countHistoryTokens(candidate)
-		
+
 		// Check if we can fit this message + already-kept messages
 		testCandidate := []openai.ChatCompletionMessage{msgs[0]}
 		testCandidate = append(testCandidate, msgs[i:]...)
 		tokens = s.countHistoryTokens(testCandidate)
-		
+
 		if tokens <= s.maxContextTokens {
 			result = testCandidate
 		} else {
 			break
 		}
 	}
-	
+
 	return result
 }
 

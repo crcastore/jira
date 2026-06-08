@@ -5,7 +5,7 @@ import (
 	"sort"
 	"strings"
 
-	"github.com/ccastorena/jira-agent/internal/chat"
+	"github.com/ccastorena/jira-agent/chat"
 )
 
 // ModelCatalog provides discoverable model names for a runtime.

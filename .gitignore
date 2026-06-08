@@ -1,6 +1,6 @@
 .env
 .DS_Store
-jira-agent
+/jira-agent
 ve/
 __pycache__/
 *.pyc
