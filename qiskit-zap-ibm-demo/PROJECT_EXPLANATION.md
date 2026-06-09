@@ -284,7 +284,7 @@ The redaction code lives in [src/qiskit_zap_ibm_demo/redact.py](src/qiskit_zap_i
 - [Dockerfile](Dockerfile): builds the Python runtime image.
 - [pyproject.toml](pyproject.toml): declares dependencies, including `qiskit` and `qiskit-ibm-runtime`.
 - [src/qiskit_zap_ibm_demo/client.py](src/qiskit_zap_ibm_demo/client.py): main CLI, IBM Runtime call, ZAP capture, artifact writing.
-- [src/qiskit_zap_ibm_demo/qiskit_payload.py](src/qiskit_zap_ibm_demo/qiskit_payload.py): local Qiskit Bell circuit builder.
+- [src/qiskit_zap_ibm_demo/circuit.py](src/qiskit_zap_ibm_demo/circuit.py): local Qiskit Bell circuit builder.
 - [src/qiskit_zap_ibm_demo/zap.py](src/qiskit_zap_ibm_demo/zap.py): ZAP API helpers.
 - [src/qiskit_zap_ibm_demo/redact.py](src/qiskit_zap_ibm_demo/redact.py): artifact redaction helpers.
 

@@ -1,4 +1,4 @@
-"""Local Qiskit plus OWASP ZAP traffic capture demo."""
+"""IBM Runtime invalid-auth traffic capture through OWASP ZAP."""
 
 __all__ = ["__version__"]
 

@@ -10,7 +10,7 @@ from dotenv import load_dotenv
 from rich.console import Console
 from rich.table import Table
 
-from qiskit_zap_ibm_demo.qiskit_payload import build_bell_circuit, build_bell_circuit_qasm
+from qiskit_zap_ibm_demo.circuit import build_bell_circuit, circuit_to_qasm
 from qiskit_zap_ibm_demo.redact import redact_json, redact_json_text, redact_text
 from qiskit_zap_ibm_demo.zap import fetch_zap_messages, filter_messages_for_targets, start_new_session, wait_for_zap
 
@@ -20,6 +20,11 @@ console = Console()
 TRANSCRIPT_FILE = "http-transcript.md"
 ZAP_MESSAGES_FILE = "zap-messages.json"
 IBM_CAPTURE_HOSTS = ("ibm.com",)
+DEFAULT_ZAP_URL = "http://zap:8090"
+DEFAULT_TOKEN = "fake-ibm-quantum-token"
+DEFAULT_CHANNEL = "ibm_quantum_platform"
+DEFAULT_ARTIFACT_DIR = "artifacts"
+OPERATION_DESCRIPTION = "QiskitRuntimeService(...), service.backends(), then SamplerV2.run(...) if auth succeeds"
 
 
 @app.callback()
@@ -44,12 +49,12 @@ def run(
 ) -> None:
     load_dotenv()
 
-    zap_proxy = zap_proxy or os.getenv("ZAP_PROXY", "http://zap:8090")
-    zap_api = zap_api or os.getenv("ZAP_API", "http://zap:8090")
-    token = token or os.getenv("INVALID_IBM_QUANTUM_TOKEN", "fake-ibm-quantum-token")
-    channel = channel or os.getenv("IBM_QUANTUM_CHANNEL", "ibm_quantum_platform")
+    zap_proxy = zap_proxy or os.getenv("ZAP_PROXY", DEFAULT_ZAP_URL)
+    zap_api = zap_api or os.getenv("ZAP_API", DEFAULT_ZAP_URL)
+    token = token or os.getenv("INVALID_IBM_QUANTUM_TOKEN", DEFAULT_TOKEN)
+    channel = channel or os.getenv("IBM_QUANTUM_CHANNEL", DEFAULT_CHANNEL)
     instance = instance or os.getenv("IBM_QUANTUM_INSTANCE") or None
-    artifact_dir = artifact_dir or Path(os.getenv("ARTIFACT_DIR", "artifacts"))
+    artifact_dir = artifact_dir or Path(os.getenv("ARTIFACT_DIR", DEFAULT_ARTIFACT_DIR))
 
     if not token.startswith("fake-"):
         raise typer.BadParameter("This demo only sends fake-* invalid tokens to IBM Quantum.")
@@ -61,20 +66,14 @@ def run(
     console.print(f"ZAP ready: {zap_version}")
 
     circuit = build_bell_circuit()
-    attempt = {
-        "package": "qiskit-ibm-runtime",
-        "operation": "QiskitRuntimeService(...), service.backends(), then SamplerV2.run(...) if auth succeeds",
-        "channel": channel,
-        "instance": instance,
-        "token": token,
-        "proxy": zap_proxy,
-        "verify_tls": verify_tls,
-        "circuit": {
-            "name": "bell_pair",
-            "format": "openqasm2",
-            "qasm": build_bell_circuit_qasm(),
-        },
-    }
+    attempt = build_attempt_details(
+        channel=channel,
+        instance=instance,
+        token=token,
+        zap_proxy=zap_proxy,
+        verify_tls=verify_tls,
+        circuit_qasm=circuit_to_qasm(circuit),
+    )
 
     console.print("[bold]Calling IBM Runtime with fake credentials through ZAP...[/bold]")
     probe_result = probe_ibm_runtime_invalid_auth(
@@ -92,6 +91,30 @@ def run(
 
     if probe_result.get("credentials_accepted") is True:
         raise RuntimeError("IBM Runtime unexpectedly accepted the fake credentials")
+
+
+def build_attempt_details(
+    channel: str,
+    instance: str | None,
+    token: str,
+    zap_proxy: str,
+    verify_tls: bool,
+    circuit_qasm: str,
+) -> dict[str, Any]:
+    return {
+        "package": "qiskit-ibm-runtime",
+        "operation": OPERATION_DESCRIPTION,
+        "channel": channel,
+        "instance": instance,
+        "token": token,
+        "proxy": zap_proxy,
+        "verify_tls": verify_tls,
+        "circuit": {
+            "name": "bell_pair",
+            "format": "openqasm2",
+            "qasm": circuit_qasm,
+        },
+    }
 
 
 def probe_ibm_runtime_invalid_auth(
@@ -157,7 +180,7 @@ def write_artifacts(
     redacted_result = redact_json(probe_result)
 
     (artifact_dir / ZAP_MESSAGES_FILE).write_text(
-        json.dumps(redacted_messages, indent=2, sort_keys=True),
+        format_json(redacted_messages),
         encoding="utf-8",
     )
     (artifact_dir / TRANSCRIPT_FILE).write_text(
@@ -186,25 +209,22 @@ def build_markdown_transcript(
         "",
         "## Attempted Runtime Call",
         "",
-        "```json",
-        json.dumps(redact_json(call_details), indent=2, sort_keys=True),
-        "```",
-        "",
+    ]
+    append_json_block(lines, call_details)
+    lines.extend([
         "## Local Qiskit Circuit",
         "",
-        "```json",
-        json.dumps(redact_json(circuit), indent=2, sort_keys=True),
-        "```",
-        "",
+    ])
+    append_json_block(lines, circuit)
+    lines.extend([
         "## Returned Error",
         "",
-        "```json",
-        json.dumps(redact_json(probe_result), indent=2, sort_keys=True),
-        "```",
-        "",
+    ])
+    append_json_block(lines, probe_result)
+    lines.extend([
         "## ZAP Messages",
         "",
-    ]
+    ])
 
     append_zap_message_markdown(lines, messages)
 
@@ -222,32 +242,46 @@ def append_zap_message_markdown(lines: list[str], messages: list[dict[str, Any]]
                 "",
                 f"Status code: `{status_code}`",
                 "",
-                "Request headers:",
-                "",
-                "```http",
-                redact_text(str(message.get("requestHeader", "")).strip()),
-                "```",
-                "",
-                "Request body:",
-                "",
-                "```json",
-                redact_json_text(str(message.get("requestBody", "")).strip() or "{}"),
-                "```",
-                "",
-                "Response headers:",
-                "",
-                "```http",
-                redact_text(str(message.get("responseHeader", "")).strip()),
-                "```",
-                "",
-                "Response body:",
-                "",
-                "```json",
-                redact_json_text(str(message.get("responseBody", "")).strip() or "{}"),
-                "```",
-                "",
             ]
         )
+        append_markdown_block(
+            lines,
+            "Request headers:",
+            "http",
+            redact_text(str(message.get("requestHeader", "")).strip()),
+        )
+        append_markdown_block(
+            lines,
+            "Request body:",
+            "json",
+            redact_json_text(str(message.get("requestBody", "")).strip() or "{}"),
+        )
+        append_markdown_block(
+            lines,
+            "Response headers:",
+            "http",
+            redact_text(str(message.get("responseHeader", "")).strip()),
+        )
+        append_markdown_block(
+            lines,
+            "Response body:",
+            "json",
+            redact_json_text(str(message.get("responseBody", "")).strip() or "{}"),
+        )
+
+
+def append_json_block(lines: list[str], value: Any) -> None:
+    append_markdown_block(lines, "", "json", format_json(value))
+
+
+def append_markdown_block(lines: list[str], title: str, language: str, value: str) -> None:
+    if title:
+        lines.extend([title, ""])
+    lines.extend([f"```{language}", value, "```", ""])
+
+
+def format_json(value: Any) -> str:
+    return json.dumps(value, indent=2, sort_keys=True)
 
 
 def print_summary(

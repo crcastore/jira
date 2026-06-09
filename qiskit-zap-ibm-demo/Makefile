@@ -13,4 +13,5 @@ down:
 	docker compose down --remove-orphans
 
 test:
+	docker compose build client
 	docker compose run --rm --no-deps client python -m unittest discover -s tests -v
