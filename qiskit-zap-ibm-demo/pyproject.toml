@@ -1,0 +1,24 @@
+[build-system]
+requires = ["setuptools>=69", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "qiskit-zap-ibm-demo"
+version = "0.1.0"
+description = "OWASP ZAP capture demo for invalid IBM Quantum Runtime credentials through Qiskit"
+readme = "README.md"
+requires-python = ">=3.11"
+dependencies = [
+    "httpx>=0.27,<0.29",
+    "python-dotenv>=1.0,<2.0",
+    "qiskit>=2.2,<3.0",
+    "qiskit-ibm-runtime>=0.47,<0.48",
+    "rich>=13.7,<14.0",
+    "typer>=0.12,<1.0",
+]
+
+[project.scripts]
+qiskit-zap-demo = "qiskit_zap_ibm_demo.client:app"
+
+[tool.setuptools.packages.find]
+where = ["src"]

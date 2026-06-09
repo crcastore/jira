@@ -1,0 +1,35 @@
+services:
+  zap:
+    image: ghcr.io/zaproxy/zaproxy:stable
+    command:
+      - zap.sh
+      - -daemon
+      - -host
+      - 0.0.0.0
+      - -port
+      - "8090"
+      - -config
+      - api.disablekey=true
+      - -config
+      - api.addrs.addr.name=.*
+      - -config
+      - api.addrs.addr.regex=true
+    ports:
+      - "8090:8090"
+
+  client:
+    build: .
+    profiles:
+      - demo
+    depends_on:
+      - zap
+    environment:
+      INVALID_IBM_QUANTUM_TOKEN: ${INVALID_IBM_QUANTUM_TOKEN:-fake-ibm-quantum-token}
+      IBM_QUANTUM_CHANNEL: ${IBM_QUANTUM_CHANNEL:-ibm_quantum_platform}
+      IBM_QUANTUM_INSTANCE: ${IBM_QUANTUM_INSTANCE:-}
+      ZAP_PROXY: ${ZAP_PROXY:-http://zap:8090}
+      ZAP_API: ${ZAP_API:-http://zap:8090}
+      ARTIFACT_DIR: /app/artifacts
+    volumes:
+      - ./artifacts:/app/artifacts
+    command: qiskit-zap-demo run
