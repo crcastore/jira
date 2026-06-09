@@ -1,0 +1,15 @@
+[package]
+name = "url-chat"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+axum = "0.7"
+dotenvy = "0.15"
+reqwest = { version = "0.12", default-features = false, features = [
+    "json",
+    "rustls-tls",
+] }
+serde = { version = "1", features = ["derive"] }
+tokio = { version = "1", features = ["macros", "rt-multi-thread", "net"] }
+uuid = { version = "1", features = ["v4"] }

@@ -1,6 +1,8 @@
 .env
 .DS_Store
 /jira-agent
+/target
+/url-chat
 ve/
 __pycache__/
 *.pyc
