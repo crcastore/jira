@@ -43,10 +43,6 @@ def fetch_zap_messages(zap_api: str, limit: int = 500) -> list[dict[str, Any]]:
     return [message for message in messages if isinstance(message, dict)]
 
 
-def filter_messages_for_target(messages: list[dict[str, Any]], target_url: str) -> list[dict[str, Any]]:
-    return filter_messages_for_targets(messages, [target_url])
-
-
 def filter_messages_for_targets(messages: list[dict[str, Any]], targets: Sequence[str]) -> list[dict[str, Any]]:
     hosts = [urlparse(target).netloc or target for target in targets if target]
     if not hosts:

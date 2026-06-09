@@ -19,8 +19,6 @@ services:
 
   client:
     build: .
-    profiles:
-      - demo
     depends_on:
       - zap
     environment:

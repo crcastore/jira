@@ -47,7 +47,13 @@ It does not use the old local mock IBM API anymore.
 From the project root:
 
 ```bash
-docker compose --profile demo up --build --abort-on-container-exit client
+make demo
+```
+
+Equivalent Docker command:
+
+```bash
+docker compose up --build --abort-on-container-exit client
 ```
 
 After the run finishes, clean up the remaining ZAP container:
