@@ -125,6 +125,7 @@ type CreateIssueArgs struct {
 	IssueType         string   `json:"issue_type,omitempty"`
 	Description       string   `json:"description,omitempty"`
 	AssigneeAccountID string   `json:"assignee_account_id,omitempty"`
+	ReporterAccountID string   `json:"reporter_account_id,omitempty"`
 	Priority          string   `json:"priority,omitempty"`
 	Labels            []string `json:"labels,omitempty"`
 }
@@ -143,6 +144,9 @@ func (c *JiraClient) CreateIssue(a CreateIssueArgs) (json.RawMessage, error) {
 	}
 	if a.AssigneeAccountID != "" {
 		fields["assignee"] = map[string]string{"accountId": a.AssigneeAccountID}
+	}
+	if a.ReporterAccountID != "" {
+		fields["reporter"] = map[string]string{"accountId": a.ReporterAccountID}
 	}
 	if a.Priority != "" {
 		fields["priority"] = map[string]string{"name": a.Priority}

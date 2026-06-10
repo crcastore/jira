@@ -103,6 +103,9 @@ func TestHandleJiraCreatePageRendersProjectDropdown(t *testing.T) {
 	if !strings.Contains(body, `<select name="assignee_account_id"`) || !strings.Contains(body, `Chris`) || !strings.Contains(body, `Unassigned`) {
 		t.Fatalf("expected Jira assignee dropdown in create page, got: %s", body)
 	}
+	if !strings.Contains(body, `<select name="reporter_account_id"`) || !strings.Contains(body, `Default`) {
+		t.Fatalf("expected Jira reporter dropdown in create page, got: %s", body)
+	}
 }
 
 func TestHandleChatPromptRequired(t *testing.T) {
@@ -142,11 +145,21 @@ func TestHandleChatRendersFriendlyTimeout(t *testing.T) {
 
 func TestHandleJiraCreatePostsStandardIssueFields(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.Method != http.MethodPost {
-			t.Errorf("method = %s, want POST", r.Method)
-		}
-		if r.URL.Path != "/rest/api/3/issue" {
-			t.Errorf("path = %s, want /rest/api/3/issue", r.URL.Path)
+		w.Header().Set("Content-Type", "application/json")
+		switch r.URL.Path {
+		case "/rest/api/3/project/search":
+			_, _ = w.Write([]byte(`{"values":[{"key":"SCRUM","name":"My Team"}]}`))
+			return
+		case "/rest/api/3/user/assignable/search":
+			_, _ = w.Write([]byte(`[{"accountId":"712020:assignee","displayName":"Ada","active":true}]`))
+			return
+		case "/rest/api/3/issue":
+			if r.Method != http.MethodPost {
+				t.Errorf("method = %s, want POST", r.Method)
+			}
+		default:
+			t.Errorf("unexpected path = %s", r.URL.Path)
+			return
 		}
 		var payload struct {
 			Fields map[string]any `json:"fields"`
@@ -166,34 +179,38 @@ func TestHandleJiraCreatePostsStandardIssueFields(t *testing.T) {
 		if nested(payload.Fields, "priority", "name") != "High" {
 			t.Errorf("priority = %v", payload.Fields["priority"])
 		}
+		if nested(payload.Fields, "assignee", "accountId") != "712020:assignee" {
+			t.Errorf("assignee = %v", payload.Fields["assignee"])
+		}
+		if nested(payload.Fields, "reporter", "accountId") != "712020:reporter" {
+			t.Errorf("reporter = %v", payload.Fields["reporter"])
+		}
 		labels, ok := payload.Fields["labels"].([]any)
 		if !ok || len(labels) != 2 || labels[0] != "auth" || labels[1] != "frontend" {
 			t.Errorf("labels = %#v", payload.Fields["labels"])
 		}
-		w.Header().Set("Content-Type", "application/json")
 		_, _ = w.Write([]byte(`{"key":"SCRUM-12"}`))
 	}))
 	defer server.Close()
 
 	app := &webApp{jc: &JiraClient{baseURL: server.URL, email: "me@example.com", token: "token", http: server.Client()}}
-	req := httptest.NewRequest(http.MethodPost, "/partials/jira-create", strings.NewReader(url.Values{
-		"project_key": {"scrum"},
-		"issue_type":  {"Bug"},
-		"summary":     {"Fix login"},
-		"description": {"Button fails"},
-		"priority":    {"High"},
-		"labels":      {"auth, frontend"},
+	req := httptest.NewRequest(http.MethodPost, "/jira/create", strings.NewReader(url.Values{
+		"project_key":         {"scrum"},
+		"issue_type":          {"Bug"},
+		"summary":             {"Fix login"},
+		"description":         {"Button fails"},
+		"priority":            {"High"},
+		"labels":              {"auth, frontend"},
+		"assignee_account_id": {"712020:assignee"},
+		"reporter_account_id": {"712020:reporter"},
 	}.Encode()))
 	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 	rr := httptest.NewRecorder()
 
-	app.handleJiraCreate(rr, req)
+	app.handleJiraCreatePage(rr, req)
 
 	if rr.Code != http.StatusOK {
 		t.Fatalf("status: got %d want 200", rr.Code)
-	}
-	if rr.Header().Get("HX-Trigger") != "jiraIssueCreated" {
-		t.Fatalf("HX-Trigger = %q, want jiraIssueCreated", rr.Header().Get("HX-Trigger"))
 	}
 	if !strings.Contains(rr.Body.String(), "SCRUM-12") {
 		t.Fatalf("expected created key in response, got: %s", rr.Body.String())

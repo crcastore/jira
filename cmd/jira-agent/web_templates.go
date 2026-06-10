@@ -260,7 +260,7 @@ var pageTmpl = template.Must(template.New("page").Parse(`<!doctype html>
         </div>
         <div class="card-body">
           <div class="card-toolbar"><button hx-get="/partials/jira-issues" hx-target="#jira-body" hx-swap="innerHTML">Refresh</button></div>
-          <div id="jira-body" hx-get="/partials/jira-issues" hx-trigger="load, every 90s, jiraIssueCreated from:body" hx-swap="innerHTML">
+          <div id="jira-body" hx-get="/partials/jira-issues" hx-trigger="load, every 90s" hx-swap="innerHTML">
             <div class="tiny">Loading issues...</div>
           </div>
         </div>
@@ -463,7 +463,10 @@ var createIssuePageTmpl = template.Must(template.New("create-issue-page").Parse(
             <label class="field">Priority<select name="priority"><option value="">None</option><option>Highest</option><option>High</option><option>Medium</option><option>Low</option><option>Lowest</option></select></label>
             <label class="field">Labels<input name="labels" type="text" autocomplete="off"></label>
           </div>
-          <label class="field">Assignee<select name="assignee_account_id"><option value="">Unassigned</option>{{range .Assignees}}<option value="{{.AccountID}}">{{.DisplayName}}</option>{{end}}</select></label>
+          <div class="field-grid">
+            <label class="field">Assignee<select name="assignee_account_id"><option value="">Unassigned</option>{{range .Assignees}}<option value="{{.AccountID}}">{{.DisplayName}}</option>{{end}}</select></label>
+            <label class="field">Reporter<select name="reporter_account_id"><option value="">Default</option>{{range .Assignees}}<option value="{{.AccountID}}">{{.DisplayName}}</option>{{end}}</select></label>
+          </div>
           <button type="submit">Create Issue</button>
         </form>
       </div>
@@ -502,9 +505,4 @@ var issuesTmpl = template.Must(template.New("issues").Parse(`
 {{else if not .Err}}
 <div class="tiny">No Jira issues returned.</div>
 {{end}}
-`))
-
-var jiraCreateResultTmpl = template.Must(template.New("jira-create-result").Parse(`
-{{if .Err}}<div class="warn">{{.Err}}</div>{{end}}
-{{if .Key}}<div class="notice">Created <a href="{{.URL}}" target="_blank" rel="noreferrer">{{.Key}}</a></div>{{end}}
 `))

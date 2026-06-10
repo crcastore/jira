@@ -2,7 +2,6 @@ package main
 
 import (
 	"context"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"net/http"
@@ -69,7 +68,6 @@ func serveWeb() {
 	mux.Handle("/api/reset", app.resetHandler())
 	mux.HandleFunc("/partials/repos", app.handleRepos)
 	mux.HandleFunc("/partials/jira-issues", app.handleJiraIssues)
-	mux.HandleFunc("/partials/jira-create", app.handleJiraCreate)
 	mux.HandleFunc("/healthz", func(w http.ResponseWriter, _ *http.Request) {
 		w.Header().Set("Content-Type", "text/plain; charset=utf-8")
 		_, _ = w.Write([]byte("ok"))
@@ -136,95 +134,6 @@ func (a *webApp) handleJiraIssues(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
 	issues, err := a.fetchJiraIssues()
 	_ = issuesTmpl.Execute(w, map[string]any{"Issues": issues, "Err": errString(err)})
-}
-
-func (a *webApp) handleJiraCreate(w http.ResponseWriter, r *http.Request) {
-	if r.Method != http.MethodPost {
-		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
-		return
-	}
-	w.Header().Set("Content-Type", "text/html; charset=utf-8")
-	result := a.createJiraIssueFromRequest(r)
-	if result.Err == "" {
-		w.Header().Set("HX-Trigger", "jiraIssueCreated")
-	}
-	_ = jiraCreateResultTmpl.Execute(w, result)
-}
-
-func (a *webApp) handleJiraCreatePage(w http.ResponseWriter, r *http.Request) {
-	if r.Method != http.MethodGet && r.Method != http.MethodPost {
-		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
-		return
-	}
-
-	projects, projectsErr := a.fetchJiraProjects()
-	selectedProject := strings.ToUpper(strings.TrimSpace(r.FormValue("project_key")))
-	if selectedProject == "" && len(projects) > 0 {
-		selectedProject = projects[0].Key
-	}
-	assignees, assigneesErr := a.fetchJiraAssignableUsers(selectedProject)
-	data := jiraCreatePageData{
-		Projects:        projects,
-		ProjectsErr:     errString(projectsErr),
-		SelectedProject: selectedProject,
-		Assignees:       assignees,
-		AssigneesErr:    errString(assigneesErr),
-	}
-	if r.Method == http.MethodPost {
-		data.Result = a.createJiraIssueFromRequest(r)
-	}
-
-	w.Header().Set("Content-Type", "text/html; charset=utf-8")
-	_ = createIssuePageTmpl.Execute(w, data)
-}
-
-type jiraCreatePageData struct {
-	Projects        []jiraProjectItem
-	ProjectsErr     string
-	SelectedProject string
-	Assignees       []jiraUserItem
-	AssigneesErr    string
-	Result          jiraCreateResult
-}
-
-type jiraCreateResult struct {
-	Key string
-	URL string
-	Err string
-}
-
-func (a *webApp) createJiraIssueFromRequest(r *http.Request) jiraCreateResult {
-	if err := r.ParseForm(); err != nil {
-		return jiraCreateResult{Err: "Invalid form submission"}
-	}
-
-	projectKey := strings.ToUpper(strings.TrimSpace(r.FormValue("project_key")))
-	summary := strings.TrimSpace(r.FormValue("summary"))
-	if projectKey == "" || summary == "" {
-		return jiraCreateResult{Err: "Project and summary are required"}
-	}
-
-	raw, err := a.jc.CreateIssue(CreateIssueArgs{
-		ProjectKey:        projectKey,
-		Summary:           summary,
-		IssueType:         strings.TrimSpace(r.FormValue("issue_type")),
-		Description:       strings.TrimSpace(r.FormValue("description")),
-		Priority:          strings.TrimSpace(r.FormValue("priority")),
-		Labels:            splitCSV(r.FormValue("labels")),
-		AssigneeAccountID: strings.TrimSpace(r.FormValue("assignee_account_id")),
-	})
-	if err != nil {
-		return jiraCreateResult{Err: errString(err)}
-	}
-
-	var created struct {
-		Key string `json:"key"`
-	}
-	if err := json.Unmarshal(raw, &created); err != nil || created.Key == "" {
-		return jiraCreateResult{Err: "Jira created the issue but returned an unexpected response"}
-	}
-
-	return jiraCreateResult{Key: created.Key, URL: a.jc.baseURL + "/browse/" + created.Key}
 }
 
 func (a *webApp) chatComponent() *chatui.Component {
