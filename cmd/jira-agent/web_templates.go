@@ -262,7 +262,7 @@ var issuesTmpl = template.Must(template.New("issues").Parse(`
   </div>
   {{end}}
 </div>
-{{else}}
+{{else if not .Err}}
 <div class="tiny">No Jira issues returned.</div>
 {{end}}
 `))

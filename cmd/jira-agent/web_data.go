@@ -55,6 +55,9 @@ func (a *webApp) fetchRepos() ([]repoItem, error) {
 }
 
 func (a *webApp) fetchJiraIssues() ([]jiraIssueItem, error) {
+	if _, err := a.jc.Myself(); err != nil {
+		return nil, fmt.Errorf("Jira authentication failed: %w", err)
+	}
 	raw, err := a.jc.Search(
 		"assignee = currentUser() AND statusCategory != Done ORDER BY updated DESC",
 		[]string{"summary", "status", "assignee", "updated"},

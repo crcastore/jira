@@ -21,11 +21,14 @@ type JiraClient struct {
 }
 
 func NewJiraClient() (*JiraClient, error) {
-	base := strings.TrimRight(os.Getenv("JIRA_BASE_URL"), "/")
+	base, err := normalizeJiraBaseURL(os.Getenv("JIRA_BASE_URL"))
+	if err != nil {
+		return nil, err
+	}
 	email := os.Getenv("JIRA_EMAIL")
 	token := os.Getenv("JIRA_API_TOKEN")
-	if base == "" || email == "" || token == "" {
-		return nil, fmt.Errorf("missing JIRA_BASE_URL, JIRA_EMAIL, or JIRA_API_TOKEN")
+	if email == "" || token == "" {
+		return nil, fmt.Errorf("missing JIRA_EMAIL or JIRA_API_TOKEN")
 	}
 	return &JiraClient{
 		baseURL: base,
@@ -33,6 +36,22 @@ func NewJiraClient() (*JiraClient, error) {
 		token:   token,
 		http:    &http.Client{Timeout: 30 * time.Second},
 	}, nil
+}
+
+func normalizeJiraBaseURL(raw string) (string, error) {
+	trimmed := strings.TrimSpace(raw)
+	if trimmed == "" {
+		return "", fmt.Errorf("missing JIRA_BASE_URL")
+	}
+	parsed, err := url.Parse(trimmed)
+	if err != nil || parsed.Scheme == "" || parsed.Host == "" {
+		return "", fmt.Errorf("JIRA_BASE_URL must be a full Jira site URL like https://your-domain.atlassian.net")
+	}
+	host := strings.ToLower(parsed.Hostname())
+	if host == "admin.atlassian.com" || host == "home.atlassian.com" || !strings.HasSuffix(host, ".atlassian.net") {
+		return "", fmt.Errorf("JIRA_BASE_URL must be your Jira site URL like https://your-domain.atlassian.net, not %s", strings.TrimRight(trimmed, "/"))
+	}
+	return parsed.Scheme + "://" + parsed.Host, nil
 }
 
 func (c *JiraClient) request(method, path string, query url.Values, body any) (json.RawMessage, error) {
@@ -69,6 +88,14 @@ func (c *JiraClient) request(method, path string, query url.Values, body any) (j
 	if resp.StatusCode == 204 || len(data) == 0 {
 		return json.RawMessage("{}"), nil
 	}
+	if !json.Valid(data) {
+		contentType := resp.Header.Get("Content-Type")
+		preview := strings.TrimSpace(string(data))
+		if len(preview) > 240 {
+			preview = preview[:240] + "..."
+		}
+		return nil, fmt.Errorf("jira %s %s returned non-JSON response (status %d, content-type %q): %s", method, path, resp.StatusCode, contentType, preview)
+	}
 	return json.RawMessage(data), nil
 }
 
@@ -81,8 +108,11 @@ func (c *JiraClient) Search(jql string, fields []string, maxResults int) (json.R
 	if maxResults <= 0 {
 		maxResults = 25
 	}
-	body := map[string]any{"jql": jql, "fields": fields, "maxResults": maxResults}
-	return c.request("POST", "/rest/api/3/search/jql", nil, body)
+	query := url.Values{}
+	query.Set("jql", jql)
+	query.Set("fields", strings.Join(fields, ","))
+	query.Set("maxResults", fmt.Sprint(maxResults))
+	return c.request("GET", "/rest/api/3/search/jql", query, nil)
 }
 
 func (c *JiraClient) GetIssue(key string) (json.RawMessage, error) {
