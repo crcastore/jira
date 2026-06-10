@@ -4,3 +4,4 @@
 ve/
 __pycache__/
 *.pyc
+artifacts/
