@@ -21,6 +21,16 @@ type jiraIssueItem struct {
 	Updated  string
 }
 
+type jiraProjectItem struct {
+	Key  string
+	Name string
+}
+
+type jiraUserItem struct {
+	AccountID   string
+	DisplayName string
+}
+
 func (a *webApp) fetchRepos() ([]repoItem, error) {
 	if a.gc == nil {
 		return nil, fmt.Errorf("GITHUB_TOKEN not set")
@@ -99,5 +109,55 @@ func (a *webApp) fetchJiraIssues() ([]jiraIssueItem, error) {
 			Updated:  trimISODate(it.Fields.Updated),
 		})
 	}
+	return items, nil
+}
+
+func (a *webApp) fetchJiraProjects() ([]jiraProjectItem, error) {
+	raw, err := a.jc.ListProjects()
+	if err != nil {
+		return nil, err
+	}
+	var payload []struct {
+		Key  string `json:"key"`
+		Name string `json:"name"`
+	}
+	if err := json.Unmarshal(raw, &payload); err != nil {
+		return nil, err
+	}
+	items := make([]jiraProjectItem, 0, len(payload))
+	for _, project := range payload {
+		if project.Key == "" {
+			continue
+		}
+		items = append(items, jiraProjectItem{Key: project.Key, Name: project.Name})
+	}
+	sort.Slice(items, func(i, j int) bool { return items[i].Key < items[j].Key })
+	return items, nil
+}
+
+func (a *webApp) fetchJiraAssignableUsers(projectKey string) ([]jiraUserItem, error) {
+	if projectKey == "" {
+		return nil, nil
+	}
+	raw, err := a.jc.SearchAssignableUsers(projectKey, 50)
+	if err != nil {
+		return nil, err
+	}
+	var payload []struct {
+		AccountID   string `json:"accountId"`
+		DisplayName string `json:"displayName"`
+		Active      bool   `json:"active"`
+	}
+	if err := json.Unmarshal(raw, &payload); err != nil {
+		return nil, err
+	}
+	items := make([]jiraUserItem, 0, len(payload))
+	for _, user := range payload {
+		if user.AccountID == "" || !user.Active {
+			continue
+		}
+		items = append(items, jiraUserItem{AccountID: user.AccountID, DisplayName: user.DisplayName})
+	}
+	sort.Slice(items, func(i, j int) bool { return items[i].DisplayName < items[j].DisplayName })
 	return items, nil
 }

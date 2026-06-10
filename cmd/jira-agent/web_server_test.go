@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"net/http"
 	"net/http/httptest"
@@ -61,6 +62,47 @@ func TestHandleIndexRendersPage(t *testing.T) {
 	if !strings.Contains(body, `value="1234"`) {
 		t.Fatalf("expected configured token limit in page, got: %s", body)
 	}
+	if !strings.Contains(body, `href="/jira/create"`) || !strings.Contains(body, `Create Jira Issue`) {
+		t.Fatalf("expected dashboard to link to dedicated create page, got: %s", body)
+	}
+}
+
+func TestHandleJiraCreatePageRendersProjectDropdown(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		switch r.URL.Path {
+		case "/rest/api/3/project/search":
+			_, _ = w.Write([]byte(`{"values":[{"key":"SCRUM","name":"My Team"}]}`))
+		case "/rest/api/3/user/assignable/search":
+			if r.URL.Query().Get("project") != "SCRUM" {
+				t.Errorf("assignable search project = %q, want SCRUM", r.URL.Query().Get("project"))
+			}
+			_, _ = w.Write([]byte(`[{"accountId":"712020:abc","displayName":"Chris","active":true}]`))
+		default:
+			t.Errorf("unexpected path = %s", r.URL.Path)
+		}
+	}))
+	defer server.Close()
+
+	app := &webApp{jc: &JiraClient{baseURL: server.URL, email: "me@example.com", token: "token", http: server.Client()}}
+	req := httptest.NewRequest(http.MethodGet, "/jira/create", nil)
+	rr := httptest.NewRecorder()
+
+	app.handleJiraCreatePage(rr, req)
+
+	if rr.Code != http.StatusOK {
+		t.Fatalf("status: got %d want 200", rr.Code)
+	}
+	body := rr.Body.String()
+	if !strings.Contains(body, `<form class="issue-form" action="/jira/create" method="post"`) {
+		t.Fatalf("expected native create form, got: %s", body)
+	}
+	if !strings.Contains(body, `<select name="project_key"`) || !strings.Contains(body, `SCRUM - My Team`) {
+		t.Fatalf("expected Jira project dropdown in create page, got: %s", body)
+	}
+	if !strings.Contains(body, `<select name="assignee_account_id"`) || !strings.Contains(body, `Chris`) || !strings.Contains(body, `Unassigned`) {
+		t.Fatalf("expected Jira assignee dropdown in create page, got: %s", body)
+	}
 }
 
 func TestHandleChatPromptRequired(t *testing.T) {
@@ -95,6 +137,66 @@ func TestHandleChatRendersFriendlyTimeout(t *testing.T) {
 	}
 	if !strings.Contains(rr.Body.String(), "did not respond within") {
 		t.Fatalf("expected timeout guidance, got: %s", rr.Body.String())
+	}
+}
+
+func TestHandleJiraCreatePostsStandardIssueFields(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodPost {
+			t.Errorf("method = %s, want POST", r.Method)
+		}
+		if r.URL.Path != "/rest/api/3/issue" {
+			t.Errorf("path = %s, want /rest/api/3/issue", r.URL.Path)
+		}
+		var payload struct {
+			Fields map[string]any `json:"fields"`
+		}
+		if err := json.NewDecoder(r.Body).Decode(&payload); err != nil {
+			t.Fatalf("decode request: %v", err)
+		}
+		if nested(payload.Fields, "project", "key") != "SCRUM" {
+			t.Errorf("project key = %v", payload.Fields["project"])
+		}
+		if payload.Fields["summary"] != "Fix login" {
+			t.Errorf("summary = %v", payload.Fields["summary"])
+		}
+		if nested(payload.Fields, "issuetype", "name") != "Bug" {
+			t.Errorf("issue type = %v", payload.Fields["issuetype"])
+		}
+		if nested(payload.Fields, "priority", "name") != "High" {
+			t.Errorf("priority = %v", payload.Fields["priority"])
+		}
+		labels, ok := payload.Fields["labels"].([]any)
+		if !ok || len(labels) != 2 || labels[0] != "auth" || labels[1] != "frontend" {
+			t.Errorf("labels = %#v", payload.Fields["labels"])
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"key":"SCRUM-12"}`))
+	}))
+	defer server.Close()
+
+	app := &webApp{jc: &JiraClient{baseURL: server.URL, email: "me@example.com", token: "token", http: server.Client()}}
+	req := httptest.NewRequest(http.MethodPost, "/partials/jira-create", strings.NewReader(url.Values{
+		"project_key": {"scrum"},
+		"issue_type":  {"Bug"},
+		"summary":     {"Fix login"},
+		"description": {"Button fails"},
+		"priority":    {"High"},
+		"labels":      {"auth, frontend"},
+	}.Encode()))
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	rr := httptest.NewRecorder()
+
+	app.handleJiraCreate(rr, req)
+
+	if rr.Code != http.StatusOK {
+		t.Fatalf("status: got %d want 200", rr.Code)
+	}
+	if rr.Header().Get("HX-Trigger") != "jiraIssueCreated" {
+		t.Fatalf("HX-Trigger = %q, want jiraIssueCreated", rr.Header().Get("HX-Trigger"))
+	}
+	if !strings.Contains(rr.Body.String(), "SCRUM-12") {
+		t.Fatalf("expected created key in response, got: %s", rr.Body.String())
 	}
 }
 

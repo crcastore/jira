@@ -186,6 +186,16 @@ func (c *JiraClient) SearchUsers(query string, maxResults int) (json.RawMessage,
 	return c.request("GET", "/rest/api/3/user/search", q, nil)
 }
 
+func (c *JiraClient) SearchAssignableUsers(projectKey string, maxResults int) (json.RawMessage, error) {
+	if maxResults <= 0 {
+		maxResults = 50
+	}
+	q := url.Values{}
+	q.Set("project", projectKey)
+	q.Set("maxResults", fmt.Sprintf("%d", maxResults))
+	return c.request("GET", "/rest/api/3/user/assignable/search", q, nil)
+}
+
 func (c *JiraClient) ListProjects() (json.RawMessage, error) {
 	raw, err := c.request("GET", "/rest/api/3/project/search", nil, nil)
 	if err != nil {

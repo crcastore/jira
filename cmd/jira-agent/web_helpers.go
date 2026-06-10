@@ -72,3 +72,15 @@ func containsString(values []string, want string) bool {
 	}
 	return false
 }
+
+func splitCSV(raw string) []string {
+	parts := strings.Split(raw, ",")
+	values := make([]string, 0, len(parts))
+	for _, part := range parts {
+		value := strings.TrimSpace(part)
+		if value != "" {
+			values = append(values, value)
+		}
+	}
+	return values
+}
