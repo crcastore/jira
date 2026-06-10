@@ -218,6 +218,7 @@ var pageTmpl = template.Must(template.New("page").Parse(`<!doctype html>
     }
   </style>
   {{.ChatStyles}}
+  {{.JiraCreateStyles}}
 </head>
 <body>
   <div class="top-shell">
@@ -256,7 +257,7 @@ var pageTmpl = template.Must(template.New("page").Parse(`<!doctype html>
       <section class="panel card">
         <div class="card-head">
           <h2>My Open Jira Issues</h2>
-          <a class="nav-tab" href="/jira/create">Create</a>
+          {{.JiraCreateDialog}}
         </div>
         <div class="card-body">
           <div class="card-toolbar"><button hx-get="/partials/jira-issues" hx-target="#jira-body" hx-swap="innerHTML">Refresh</button></div>
@@ -388,54 +389,9 @@ var createIssuePageTmpl = template.Must(template.New("create-issue-page").Parse(
       font-size: 22px;
     }
     .page-body { padding: 16px; }
-    .issue-form {
-      display: grid;
-      gap: 12px;
-    }
-    .field-grid {
-      display: grid;
-      grid-template-columns: 1fr 1fr;
-      gap: 12px;
-    }
-    .field {
-      display: grid;
-      gap: 5px;
-      font-size: 12px;
-      color: var(--muted);
-    }
-    .field input,
-    .field select,
-    .field textarea {
-      width: 100%;
-      border: 1px solid var(--border);
-      border-radius: 8px;
-      padding: 9px 10px;
-      color: var(--ink);
-      font: inherit;
-      font-size: 14px;
-      background: #fff;
-    }
-    .field textarea {
-      min-height: 140px;
-      resize: vertical;
-    }
-    button {
-      justify-self: start;
-      border: 0;
-      border-radius: 10px;
-      background: linear-gradient(135deg, var(--accent), var(--accent-2));
-      color: #fff;
-      font-weight: 700;
-      padding: 10px 14px;
-      cursor: pointer;
-    }
-    .warn { color: var(--error); font-size: 13px; }
-    .notice { color: #166534; font-size: 13px; }
-    .notice a { color: #166534; font-weight: 700; text-decoration: none; }
-    @media (max-width: 720px) {
-      .field-grid { grid-template-columns: 1fr; }
-    }
+    .hx-jira-create { --jira-create-accent: linear-gradient(135deg, var(--accent), var(--accent-2)); }
   </style>
+  {{.CreateStyles}}
 </head>
 <body>
   <div class="top-shell">
@@ -448,27 +404,7 @@ var createIssuePageTmpl = template.Must(template.New("create-issue-page").Parse(
     <section class="panel">
       <header class="page-head"><h1>Create Jira Issue</h1></header>
       <div class="page-body">
-        {{if .Result.Err}}<div class="warn">{{.Result.Err}}</div>{{end}}
-        {{if .Result.Key}}<div class="notice">Created <a href="{{.Result.URL}}" target="_blank" rel="noreferrer">{{.Result.Key}}</a></div>{{end}}
-        {{if .ProjectsErr}}<div class="warn">Could not load Jira projects: {{.ProjectsErr}}</div>{{end}}
-        {{if .AssigneesErr}}<div class="warn">Could not load Jira assignees: {{.AssigneesErr}}</div>{{end}}
-        <form class="issue-form" action="/jira/create" method="post">
-          <div class="field-grid">
-            <label class="field">Project{{if .Projects}}<select name="project_key" required>{{range .Projects}}<option value="{{.Key}}"{{if eq .Key $.SelectedProject}} selected{{end}}>{{.Key}} - {{.Name}}</option>{{end}}</select>{{else}}<input name="project_key" type="text" autocomplete="off" required>{{end}}</label>
-            <label class="field">Issue type<select name="issue_type"><option>Task</option><option>Bug</option><option>Story</option><option>Epic</option></select></label>
-          </div>
-          <label class="field">Summary<input name="summary" type="text" autocomplete="off" required></label>
-          <label class="field">Description<textarea name="description"></textarea></label>
-          <div class="field-grid">
-            <label class="field">Priority<select name="priority"><option value="">None</option><option>Highest</option><option>High</option><option>Medium</option><option>Low</option><option>Lowest</option></select></label>
-            <label class="field">Labels<input name="labels" type="text" autocomplete="off"></label>
-          </div>
-          <div class="field-grid">
-            <label class="field">Assignee<select name="assignee_account_id"><option value="">Unassigned</option>{{range .Assignees}}<option value="{{.AccountID}}">{{.DisplayName}}</option>{{end}}</select></label>
-            <label class="field">Reporter<select name="reporter_account_id"><option value="">Default</option>{{range .Assignees}}<option value="{{.AccountID}}">{{.DisplayName}}</option>{{end}}</select></label>
-          </div>
-          <button type="submit">Create Issue</button>
-        </form>
+        {{.CreateForm}}
       </div>
     </section>
   </main>
@@ -497,7 +433,7 @@ var issuesTmpl = template.Must(template.New("issues").Parse(`
 <div class="list">
   {{range .Issues}}
   <div class="item">
-    <div><strong>{{.Key}}</strong> - {{.Summary}}</div>
+    <div><a href="{{.URL}}" target="_blank" rel="noreferrer"><strong>{{.Key}}</strong> - {{.Summary}}</a></div>
     <div class="meta">{{.Status}} | {{.Assignee}} | updated {{.Updated}}</div>
   </div>
   {{end}}

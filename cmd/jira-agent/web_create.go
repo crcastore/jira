@@ -2,34 +2,16 @@ package main
 
 import (
 	"encoding/json"
+	"html/template"
 	"net/http"
 	"strings"
+
+	"github.com/ccastorena/jira-agent/jiraissueui"
 )
 
 type jiraCreatePageData struct {
-	Projects        []jiraProjectItem
-	ProjectsErr     string
-	SelectedProject string
-	Assignees       []jiraUserItem
-	AssigneesErr    string
-	Result          jiraCreateResult
-}
-
-type jiraCreateResult struct {
-	Key string
-	URL string
-	Err string
-}
-
-type jiraCreateForm struct {
-	ProjectKey        string
-	Summary           string
-	IssueType         string
-	Description       string
-	Priority          string
-	Labels            []string
-	AssigneeAccountID string
-	ReporterAccountID string
+	CreateStyles template.HTML
+	CreateForm   template.HTML
 }
 
 func (a *webApp) handleJiraCreatePage(w http.ResponseWriter, r *http.Request) {
@@ -37,82 +19,131 @@ func (a *webApp) handleJiraCreatePage(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
 		return
 	}
+	if r.Method == http.MethodPost && isHTMXRequest(r) {
+		_, result := a.createJiraIssueFromRequest(r)
+		if result.Err == "" {
+			w.Header().Set("HX-Trigger", "jiraIssueCreated")
+		}
+		w.Header().Set("Content-Type", "text/html; charset=utf-8")
+		_ = a.jiraCreateComponent().RenderResult(w, jiraissueui.FormData{Result: result})
+		return
+	}
 
-	data := a.newJiraCreatePageData(r)
-	if r.Method == http.MethodPost {
-		data.Result = a.createJiraIssueFromRequest(r)
+	data, err := a.newJiraCreatePageData(r)
+	if err != nil {
+		http.Error(w, "create issue form unavailable", http.StatusInternalServerError)
+		return
 	}
 
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
 	_ = createIssuePageTmpl.Execute(w, data)
 }
 
-func (a *webApp) newJiraCreatePageData(r *http.Request) jiraCreatePageData {
-	projects, projectsErr := a.fetchJiraProjects()
-	selectedProject := strings.ToUpper(strings.TrimSpace(r.FormValue("project_key")))
-	if selectedProject == "" && len(projects) > 0 {
-		selectedProject = projects[0].Key
+func (a *webApp) newJiraCreatePageData(r *http.Request) (jiraCreatePageData, error) {
+	values := jiraissueui.IssueForm{ProjectKey: selectedJiraProject(r)}
+	result := jiraissueui.Result{}
+	if r.Method == http.MethodPost {
+		values, result = a.createJiraIssueFromRequest(r)
 	}
 
-	assignees, assigneesErr := a.fetchJiraAssignableUsers(selectedProject)
+	formData := a.jiraCreateFormData(values, result)
+	form, err := a.jiraCreateComponent().Form(formData)
+	if err != nil {
+		return jiraCreatePageData{}, err
+	}
+
 	return jiraCreatePageData{
-		Projects:        projects,
-		ProjectsErr:     errString(projectsErr),
-		SelectedProject: selectedProject,
-		Assignees:       assignees,
-		AssigneesErr:    errString(assigneesErr),
+		CreateStyles: jiraissueui.StyleTag(),
+		CreateForm:   form,
+	}, nil
+}
+
+func (a *webApp) jiraCreateFormData(values jiraissueui.IssueForm, result jiraissueui.Result) jiraissueui.FormData {
+	projects, projectsErr := a.fetchJiraProjects()
+	if values.ProjectKey == "" && len(projects) > 0 {
+		values.ProjectKey = projects[0].Key
+	}
+	assignees, assigneesErr := a.fetchJiraAssignableUsers(values.ProjectKey)
+	return jiraissueui.FormData{
+		Endpoint:     "/jira/create",
+		Projects:     projects,
+		ProjectsErr:  errString(projectsErr),
+		Assignees:    assignees,
+		AssigneesErr: errString(assigneesErr),
+		Values:       values,
+		Result:       result,
 	}
 }
 
-func (a *webApp) createJiraIssueFromRequest(r *http.Request) jiraCreateResult {
-	form, formErr := parseJiraCreateForm(r)
-	if formErr != "" {
-		return jiraCreateResult{Err: formErr}
+func (a *webApp) jiraCreateDialog() template.HTML {
+	if a.jc == nil {
+		return jiraCreateFallbackLink()
 	}
-
-	raw, err := a.jc.CreateIssue(form.createArgs())
+	dialog, err := a.jiraCreateComponent().Dialog(jiraissueui.DialogData{
+		ButtonLabel: "Create",
+		Title:       "Create Jira Issue",
+		Form:        a.jiraCreateFormData(jiraissueui.IssueForm{}, jiraissueui.Result{}),
+	})
 	if err != nil {
-		return jiraCreateResult{Err: errString(err)}
+		return jiraCreateFallbackLink()
+	}
+	return dialog
+}
+
+func jiraCreateFallbackLink() template.HTML {
+	return template.HTML(`<a class="nav-tab" href="/jira/create">Create</a>`)
+}
+
+func jiraCreateStyleTag() template.HTML {
+	return jiraissueui.StyleTag()
+}
+
+func (a *webApp) jiraCreateComponent() *jiraissueui.Component {
+	if a.jiraCreateUI != nil {
+		return a.jiraCreateUI
+	}
+	return jiraissueui.New()
+}
+
+func selectedJiraProject(r *http.Request) string {
+	return strings.ToUpper(strings.TrimSpace(r.FormValue("project_key")))
+}
+
+func isHTMXRequest(r *http.Request) bool {
+	return r.Header.Get("HX-Request") == "true"
+}
+
+func (a *webApp) createJiraIssueFromRequest(r *http.Request) (jiraissueui.IssueForm, jiraissueui.Result) {
+	form, err := jiraissueui.ParseRequest(r)
+	if err != nil {
+		return form, jiraissueui.Result{Err: err.Error()}
+	}
+	return form, a.createJiraIssue(form)
+}
+
+func (a *webApp) createJiraIssue(form jiraissueui.IssueForm) jiraissueui.Result {
+	raw, err := a.jc.CreateIssue(createIssueArgsFromForm(form))
+	if err != nil {
+		return jiraissueui.Result{Err: errString(err)}
 	}
 
 	key, ok := parseCreatedIssueKey(raw)
 	if !ok {
-		return jiraCreateResult{Err: "Jira created the issue but returned an unexpected response"}
+		return jiraissueui.Result{Err: "Jira created the issue but returned an unexpected response"}
 	}
-	return jiraCreateResult{Key: key, URL: a.jc.baseURL + "/browse/" + key}
+	return jiraissueui.Result{Key: key, URL: a.jc.baseURL + "/browse/" + key}
 }
 
-func parseJiraCreateForm(r *http.Request) (jiraCreateForm, string) {
-	if err := r.ParseForm(); err != nil {
-		return jiraCreateForm{}, "Invalid form submission"
-	}
-
-	form := jiraCreateForm{
-		ProjectKey:        strings.ToUpper(strings.TrimSpace(r.FormValue("project_key"))),
-		Summary:           strings.TrimSpace(r.FormValue("summary")),
-		IssueType:         strings.TrimSpace(r.FormValue("issue_type")),
-		Description:       strings.TrimSpace(r.FormValue("description")),
-		Priority:          strings.TrimSpace(r.FormValue("priority")),
-		Labels:            splitCSV(r.FormValue("labels")),
-		AssigneeAccountID: strings.TrimSpace(r.FormValue("assignee_account_id")),
-		ReporterAccountID: strings.TrimSpace(r.FormValue("reporter_account_id")),
-	}
-	if form.ProjectKey == "" || form.Summary == "" {
-		return jiraCreateForm{}, "Project and summary are required"
-	}
-	return form, ""
-}
-
-func (f jiraCreateForm) createArgs() CreateIssueArgs {
+func createIssueArgsFromForm(form jiraissueui.IssueForm) CreateIssueArgs {
 	return CreateIssueArgs{
-		ProjectKey:        f.ProjectKey,
-		Summary:           f.Summary,
-		IssueType:         f.IssueType,
-		Description:       f.Description,
-		Priority:          f.Priority,
-		Labels:            f.Labels,
-		AssigneeAccountID: f.AssigneeAccountID,
-		ReporterAccountID: f.ReporterAccountID,
+		ProjectKey:        form.ProjectKey,
+		Summary:           form.Summary,
+		IssueType:         form.IssueType,
+		Description:       form.Description,
+		Priority:          form.Priority,
+		Labels:            form.Labels,
+		AssigneeAccountID: form.AssigneeAccountID,
+		ReporterAccountID: form.ReporterAccountID,
 	}
 }
 

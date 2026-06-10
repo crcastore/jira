@@ -12,11 +12,13 @@ import (
 	"github.com/ccastorena/jira-agent/agentcore"
 	"github.com/ccastorena/jira-agent/chathttp"
 	"github.com/ccastorena/jira-agent/chatui"
+	"github.com/ccastorena/jira-agent/jiraissueui"
 )
 
 type webApp struct {
 	chat             agentcore.ChatService
 	chatUI           *chatui.Component
+	jiraCreateUI     *jiraissueui.Component
 	llmTimeout       time.Duration
 	jc               *JiraClient
 	gc               *GitHubClient
@@ -54,6 +56,7 @@ func serveWeb() {
 	app := &webApp{
 		chat:             chatSvc,
 		chatUI:           chatui.New(),
+		jiraCreateUI:     jiraissueui.New(),
 		llmTimeout:       time.Duration(llmTimeoutSec) * time.Second,
 		jc:               jc,
 		gc:               gc,
@@ -111,6 +114,8 @@ func (a *webApp) handleIndex(w http.ResponseWriter, r *http.Request) {
 		"Model":            a.chat.DefaultModel(),
 		"GitHubReady":      a.gc != nil,
 		"ChatStyles":       chatui.StyleTag(),
+		"JiraCreateStyles": jiraCreateStyleTag(),
+		"JiraCreateDialog": a.jiraCreateDialog(),
 		"ChatWidget":       widget,
 		"MaxContextTokens": a.currentMaxContextTokens(),
 	})

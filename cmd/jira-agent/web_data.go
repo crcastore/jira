@@ -4,6 +4,8 @@ import (
 	"encoding/json"
 	"fmt"
 	"sort"
+
+	"github.com/ccastorena/jira-agent/jiraissueui"
 )
 
 type repoItem struct {
@@ -15,20 +17,11 @@ type repoItem struct {
 
 type jiraIssueItem struct {
 	Key      string
+	URL      string
 	Summary  string
 	Status   string
 	Assignee string
 	Updated  string
-}
-
-type jiraProjectItem struct {
-	Key  string
-	Name string
-}
-
-type jiraUserItem struct {
-	AccountID   string
-	DisplayName string
 }
 
 func (a *webApp) fetchRepos() ([]repoItem, error) {
@@ -103,6 +96,7 @@ func (a *webApp) fetchJiraIssues() ([]jiraIssueItem, error) {
 		}
 		items = append(items, jiraIssueItem{
 			Key:      it.Key,
+			URL:      a.jc.baseURL + "/browse/" + it.Key,
 			Summary:  it.Fields.Summary,
 			Status:   it.Fields.Status.Name,
 			Assignee: assignee,
@@ -112,7 +106,7 @@ func (a *webApp) fetchJiraIssues() ([]jiraIssueItem, error) {
 	return items, nil
 }
 
-func (a *webApp) fetchJiraProjects() ([]jiraProjectItem, error) {
+func (a *webApp) fetchJiraProjects() ([]jiraissueui.Project, error) {
 	raw, err := a.jc.ListProjects()
 	if err != nil {
 		return nil, err
@@ -124,18 +118,18 @@ func (a *webApp) fetchJiraProjects() ([]jiraProjectItem, error) {
 	if err := json.Unmarshal(raw, &payload); err != nil {
 		return nil, err
 	}
-	items := make([]jiraProjectItem, 0, len(payload))
+	items := make([]jiraissueui.Project, 0, len(payload))
 	for _, project := range payload {
 		if project.Key == "" {
 			continue
 		}
-		items = append(items, jiraProjectItem{Key: project.Key, Name: project.Name})
+		items = append(items, jiraissueui.Project{Key: project.Key, Name: project.Name})
 	}
 	sort.Slice(items, func(i, j int) bool { return items[i].Key < items[j].Key })
 	return items, nil
 }
 
-func (a *webApp) fetchJiraAssignableUsers(projectKey string) ([]jiraUserItem, error) {
+func (a *webApp) fetchJiraAssignableUsers(projectKey string) ([]jiraissueui.User, error) {
 	if projectKey == "" {
 		return nil, nil
 	}
@@ -151,12 +145,12 @@ func (a *webApp) fetchJiraAssignableUsers(projectKey string) ([]jiraUserItem, er
 	if err := json.Unmarshal(raw, &payload); err != nil {
 		return nil, err
 	}
-	items := make([]jiraUserItem, 0, len(payload))
+	items := make([]jiraissueui.User, 0, len(payload))
 	for _, user := range payload {
 		if user.AccountID == "" || !user.Active {
 			continue
 		}
-		items = append(items, jiraUserItem{AccountID: user.AccountID, DisplayName: user.DisplayName})
+		items = append(items, jiraissueui.User{AccountID: user.AccountID, DisplayName: user.DisplayName})
 	}
 	sort.Slice(items, func(i, j int) bool { return items[i].DisplayName < items[j].DisplayName })
 	return items, nil

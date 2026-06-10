@@ -1,0 +1,246 @@
+package jiraissueui
+
+import (
+	"net/http/httptest"
+	"net/url"
+	"strings"
+	"testing"
+)
+
+func TestParseValuesNormalizesAndValidatesForm(t *testing.T) {
+	form, err := ParseValues(url.Values{
+		"project_key":         {" scrum "},
+		"summary":             {" Fix login "},
+		"issue_type":          {" Bug "},
+		"description":         {" Details "},
+		"priority":            {" High "},
+		"labels":              {" auth, frontend, , urgent "},
+		"assignee_account_id": {" 712020:assignee "},
+		"reporter_account_id": {" 712020:reporter "},
+	})
+	if err != nil {
+		t.Fatalf("ParseValues returned error: %v", err)
+	}
+	if form.ProjectKey != "SCRUM" || form.Summary != "Fix login" || form.IssueType != "Bug" {
+		t.Fatalf("unexpected normalized form: %+v", form)
+	}
+	if form.Description != "Details" || form.Priority != "High" {
+		t.Fatalf("unexpected text fields: %+v", form)
+	}
+	if form.AssigneeAccountID != "712020:assignee" || form.ReporterAccountID != "712020:reporter" {
+		t.Fatalf("unexpected users: %+v", form)
+	}
+	wantLabels := []string{"auth", "frontend", "urgent"}
+	if len(form.Labels) != len(wantLabels) {
+		t.Fatalf("labels = %#v", form.Labels)
+	}
+	for i, want := range wantLabels {
+		if form.Labels[i] != want {
+			t.Fatalf("labels[%d] = %q, want %q", i, form.Labels[i], want)
+		}
+	}
+}
+
+func TestParseValuesRequiresProjectAndSummary(t *testing.T) {
+	for _, values := range []url.Values{
+		{"project_key": {"SCRUM"}},
+		{"summary": {"Fix login"}},
+	} {
+		if _, err := ParseValues(values); err != ErrRequiredFields {
+			t.Fatalf("ParseValues(%v) error = %v, want ErrRequiredFields", values, err)
+		}
+	}
+}
+
+func TestParseRequestRejectsInvalidFormBody(t *testing.T) {
+	req := httptest.NewRequest("POST", "/jira/create", strings.NewReader("%zz"))
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	if _, err := ParseRequest(req); err != ErrInvalidForm {
+		t.Fatalf("ParseRequest error = %v, want ErrInvalidForm", err)
+	}
+}
+
+func TestIssueFormLabelsCSV(t *testing.T) {
+	form := IssueForm{Labels: []string{"auth", "frontend"}}
+	if got := form.LabelsCSV(); got != "auth, frontend" {
+		t.Fatalf("LabelsCSV = %q", got)
+	}
+}
+
+func TestFormRendersHTMXAndNativeFormAttributes(t *testing.T) {
+	html, err := New().Form(FormData{Endpoint: "/tickets/create"})
+	if err != nil {
+		t.Fatalf("Form returned error: %v", err)
+	}
+	got := string(html)
+	for _, want := range []string{
+		`class="hx-jira-create"`,
+		`action="/tickets/create"`,
+		`method="post"`,
+		`hx-post="/tickets/create"`,
+		`hx-target="#jira-create-result"`,
+		`hx-indicator="#jira-create-working"`,
+		`Creating issue`,
+	} {
+		if !strings.Contains(got, want) {
+			t.Fatalf("form missing %q\n%s", want, got)
+		}
+	}
+}
+
+func TestDialogRendersLauncherWindowAndForm(t *testing.T) {
+	html, err := New().Dialog(DialogData{
+		DialogID:    "ticket-window",
+		ButtonLabel: "Create ticket",
+		Title:       "New ticket",
+		Form: FormData{
+			Endpoint: "/tickets/create",
+			Projects: []Project{{Key: "SCRUM", Name: "My Team"}},
+		},
+	})
+	if err != nil {
+		t.Fatalf("Dialog returned error: %v", err)
+	}
+	got := string(html)
+	for _, want := range []string{
+		`class="hx-jira-create-launcher"`,
+		`href="/tickets/create"`,
+		`data-jira-create-open`,
+		`<dialog class="hx-jira-create-dialog" id="ticket-window"`,
+		`data-jira-create-close`,
+		`New ticket`,
+		`Create ticket`,
+		`action="/tickets/create"`,
+		`hx-post="/tickets/create"`,
+		`dialog.showModal`,
+	} {
+		if !strings.Contains(got, want) {
+			t.Fatalf("dialog missing %q\n%s", want, got)
+		}
+	}
+}
+
+func TestDialogUsesSafeDefaults(t *testing.T) {
+	html, err := New().Dialog(DialogData{})
+	if err != nil {
+		t.Fatalf("Dialog returned error: %v", err)
+	}
+	got := string(html)
+	for _, want := range []string{
+		`id="jira-create-dialog"`,
+		`href="/jira/create"`,
+		`Create Jira Issue`,
+		`action="/jira/create"`,
+		`id="jira-create-result"`,
+		`id="jira-create-working"`,
+	} {
+		if !strings.Contains(got, want) {
+			t.Fatalf("dialog missing default %q\n%s", want, got)
+		}
+	}
+}
+
+func TestDialogEscapesTitleAndButtonLabel(t *testing.T) {
+	html, err := New().Dialog(DialogData{
+		ButtonLabel: `<script>alert(1)</script>`,
+		Title:       `<img src=x onerror=alert(1)>`,
+	})
+	if err != nil {
+		t.Fatalf("Dialog returned error: %v", err)
+	}
+	got := string(html)
+	if strings.Contains(got, `<script>alert(1)</script>`) || strings.Contains(got, `<img src=x`) {
+		t.Fatalf("dialog rendered unsafe raw text:\n%s", got)
+	}
+}
+
+func TestFormRendersDropdownsAndSelectedValues(t *testing.T) {
+	html, err := New().Form(FormData{
+		Endpoint:  "/jira/create",
+		Projects:  []Project{{Key: "SCRUM", Name: "My Team"}, {Key: "OPS", Name: "Ops"}},
+		Assignees: []User{{AccountID: "a1", DisplayName: "Ada"}, {AccountID: "b2", DisplayName: "Bob"}},
+		Values: IssueForm{
+			ProjectKey:        "OPS",
+			Summary:           "Fix deploy",
+			IssueType:         "Bug",
+			Description:       "Deploy is blocked",
+			Priority:          "High",
+			Labels:            []string{"deploy", "urgent"},
+			AssigneeAccountID: "a1",
+			ReporterAccountID: "b2",
+		},
+	})
+	if err != nil {
+		t.Fatalf("Form returned error: %v", err)
+	}
+	got := string(html)
+	for _, want := range []string{
+		`<option value="OPS" selected>OPS - Ops</option>`,
+		`<option value="Bug" selected>Bug</option>`,
+		`value="Fix deploy"`,
+		`Deploy is blocked`,
+		`<option value="High" selected>High</option>`,
+		`value="deploy, urgent"`,
+		`<option value="a1" selected>Ada</option>`,
+		`<option value="b2" selected>Bob</option>`,
+	} {
+		if !strings.Contains(got, want) {
+			t.Fatalf("form missing %q\n%s", want, got)
+		}
+	}
+}
+
+func TestFormFallsBackToProjectTextInput(t *testing.T) {
+	html, err := New().Form(FormData{Values: IssueForm{ProjectKey: "SCRUM"}})
+	if err != nil {
+		t.Fatalf("Form returned error: %v", err)
+	}
+	got := string(html)
+	if !strings.Contains(got, `name="project_key" type="text" value="SCRUM"`) {
+		t.Fatalf("expected project text fallback, got:\n%s", got)
+	}
+}
+
+func TestFormEscapesUserInput(t *testing.T) {
+	html, err := New().Form(FormData{Values: IssueForm{
+		ProjectKey:  `SCRUM"><script>alert(1)</script>`,
+		Summary:     `<script>alert(1)</script>`,
+		Description: `<img src=x onerror=alert(1)>`,
+	}})
+	if err != nil {
+		t.Fatalf("Form returned error: %v", err)
+	}
+	got := string(html)
+	if strings.Contains(got, `<script>alert(1)</script>`) || strings.Contains(got, `<img src=x`) {
+		t.Fatalf("form rendered unsafe raw input:\n%s", got)
+	}
+}
+
+func TestResultRendering(t *testing.T) {
+	html, err := New().ResultHTML(FormData{Result: Result{Key: "SCRUM-12", URL: "https://example.atlassian.net/browse/SCRUM-12"}})
+	if err != nil {
+		t.Fatalf("ResultHTML returned error: %v", err)
+	}
+	got := string(html)
+	if !strings.Contains(got, `Created <a href="https://example.atlassian.net/browse/SCRUM-12"`) || !strings.Contains(got, `SCRUM-12`) {
+		t.Fatalf("unexpected success result:\n%s", got)
+	}
+
+	html, err = New().ResultHTML(FormData{Result: Result{Err: "boom"}})
+	if err != nil {
+		t.Fatalf("ResultHTML returned error: %v", err)
+	}
+	if !strings.Contains(string(html), `hx-jira-create-warn`) || !strings.Contains(string(html), `boom`) {
+		t.Fatalf("unexpected error result:\n%s", html)
+	}
+}
+
+func TestStyleTagAndCSSAreScoped(t *testing.T) {
+	css := string(CSS())
+	if !strings.Contains(css, ".hx-jira-create") {
+		t.Fatalf("CSS is not scoped: %s", css)
+	}
+	if !strings.Contains(string(StyleTag()), "<style>") {
+		t.Fatalf("StyleTag missing style wrapper")
+	}
+}
