@@ -89,13 +89,15 @@ Open <http://localhost:8080>. The page provides:
 ## 4. Example prompts
 
 The currently exposed chat tools are intentionally limited to GitHub identity,
-repository discovery, and issue workflows. Removed Jira, pull request, search,
-and workflow schemas are archived in [REMOVED_TOOLS.md](REMOVED_TOOLS.md).
+repository discovery, issue workflows, and changed-file inspection for pull
+requests / merge requests (MRs). Removed Jira, pull request write, search, and
+workflow schemas are archived in [REMOVED_TOOLS.md](REMOVED_TOOLS.md).
 
 - `who am I on GitHub?`
 - `list my repos sorted by recently pushed`
 - `show open issues in owner/repo`
 - `show issue #17 in owner/repo`
+- `show files changed in MR #12 in owner/repo`
 - `create an issue in owner/repo titled "Fix flaky login test" with label bug`
 - `comment on issue #17 in owner/repo saying "looking into this today"`
 - `close issue #17 in owner/repo`

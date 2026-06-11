@@ -9,7 +9,7 @@ import (
 )
 
 // ToolSchemas describes every tool exposed to the LLM.
-// Trimmed to a focused 8-tool GitHub issue workflow. The removed tool schemas
+// Trimmed to a focused GitHub issue and pull request workflow. The removed tool schemas
 // (all Jira tools + extra GitHub tools) are archived in REMOVED_TOOLS.md and can
 // be pasted back here to restore them. CallTool still dispatches them if called.
 var ToolSchemas = []openai.Tool{
@@ -73,6 +73,20 @@ var ToolSchemas = []openai.Tool{
 		},
 	}},
 	{Type: openai.ToolTypeFunction, Function: &openai.FunctionDefinition{
+		Name:        "gh_list_pr_files",
+		Description: "List files changed in a pull request / merge request (MR).",
+		Parameters: jsonschema.Definition{
+			Type: jsonschema.Object,
+			Properties: map[string]jsonschema.Definition{
+				"owner":    {Type: jsonschema.String},
+				"repo":     {Type: jsonschema.String},
+				"number":   {Type: jsonschema.Integer, Description: "pull request / MR number"},
+				"per_page": {Type: jsonschema.Integer},
+			},
+			Required: []string{"owner", "repo", "number"},
+		},
+	}},
+	{Type: openai.ToolTypeFunction, Function: &openai.FunctionDefinition{
 		Name:        "gh_create_issue",
 		Description: "Create a GitHub issue.",
 		Parameters: jsonschema.Definition{
@@ -121,14 +135,28 @@ const toolResultMaxBytes = 60000
 
 // toolAliases maps common model-hallucinated tool names to the canonical name.
 var toolAliases = map[string]string{
-	"gh_list_repos":  "gh_list_my_repos",
-	"gh_repos":       "gh_list_my_repos",
-	"list_repos":     "gh_list_my_repos",
-	"list_my_repos":  "gh_list_my_repos",
-	"gh_my_repos":    "gh_list_my_repos",
-	"search_jira":    "search_issues",
-	"jira_search":    "search_issues",
-	"get_jira_issue": "get_issue",
+	"gh_list_repos":               "gh_list_my_repos",
+	"gh_repos":                    "gh_list_my_repos",
+	"list_repos":                  "gh_list_my_repos",
+	"list_my_repos":               "gh_list_my_repos",
+	"gh_my_repos":                 "gh_list_my_repos",
+	"gh_list_mr_files":            "gh_list_pr_files",
+	"gh_list_merge_request_files": "gh_list_pr_files",
+	"gh_get_mr_files":             "gh_list_pr_files",
+	"gh_get_merge_request_files":  "gh_list_pr_files",
+	"gh_changed_files":            "gh_list_pr_files",
+	"gh_pr_changed_files":         "gh_list_pr_files",
+	"gh_mr_changed_files":         "gh_list_pr_files",
+	"list_mr_files":               "gh_list_pr_files",
+	"list_merge_request_files":    "gh_list_pr_files",
+	"get_mr_files":                "gh_list_pr_files",
+	"get_merge_request_files":     "gh_list_pr_files",
+	"changed_files":               "gh_list_pr_files",
+	"pr_changed_files":            "gh_list_pr_files",
+	"mr_changed_files":            "gh_list_pr_files",
+	"search_jira":                 "search_issues",
+	"jira_search":                 "search_issues",
+	"get_jira_issue":              "get_issue",
 }
 
 // canonicalToolName resolves an alias to its canonical tool name, returning the

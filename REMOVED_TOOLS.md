@@ -1,12 +1,12 @@
 # Removed Tools
 
-`ToolSchemas` in `tools.go` was trimmed from **33 tools → 8 tools** to reduce the
+`ToolSchemas` in `tools.go` was trimmed from **33 tools → 9 tools** to reduce the
 schema sent to the LLM on every request. Only the schemas the model *sees* were
 removed — the underlying client methods and the `CallTool` dispatch are still
 present, so any tool below can be restored simply by pasting its schema block
 back into the `ToolSchemas` slice in `tools.go`.
 
-## Kept (8)
+## Kept (9)
 
 | Tool | Purpose |
 | --- | --- |
@@ -15,19 +15,20 @@ back into the `ToolSchemas` slice in `tools.go`.
 | `gh_get_repo` | Repo metadata |
 | `gh_list_issues` | **See issues in a repo** |
 | `gh_get_issue` | Get one issue/PR |
+| `gh_list_pr_files` | See files changed in a pull request / merge request (MR) |
 | `gh_create_issue` | **Open issue** |
 | `gh_close_issue` | **Close issue** |
 | `gh_comment_issue` | Comment on an issue/PR |
 
-## Removed (25)
+## Removed (24)
 
 **Jira (10):** `search_issues`, `get_issue`, `create_issue`, `add_comment`,
 `list_transitions`, `transition_issue`, `update_issue_fields`, `search_users`,
 `list_projects`, `myself`
 
-**GitHub (15):** `gh_search_repos`, `gh_update_issue`, `gh_search_issues`,
+**GitHub (14):** `gh_search_repos`, `gh_update_issue`, `gh_search_issues`,
 `gh_list_pulls`, `gh_get_pull`, `gh_create_pull`, `gh_merge_pull`,
-`gh_list_pr_files`, `gh_review_pull`, `gh_list_workflows`, `gh_run_workflow`,
+`gh_review_pull`, `gh_list_workflows`, `gh_run_workflow`,
 `gh_list_workflow_runs`, `gh_get_workflow_run`, `gh_wait_for_workflow_run`,
 `gh_run_workflow_and_wait`
 
