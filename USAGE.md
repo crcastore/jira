@@ -1,7 +1,7 @@
 # Usage Guide
 
 A natural-language agent for **Jira Cloud** dashboard data and a focused
-**GitHub issue** chat workflow. It runs as either a terminal CLI or an HTMX web
+**GitHub repository and issue** chat workflow. It runs as either a terminal CLI or an HTMX web
 app, and both share the same chat engine. This guide covers setup, running,
 configuration, and how to reuse the modular chat packages in your own HTMX apps.
 
@@ -89,11 +89,16 @@ Open <http://localhost:8080>. The page provides:
 ## 4. Example prompts
 
 The currently exposed chat tools are intentionally limited to GitHub identity,
-repository discovery, and issue workflows. Removed Jira, pull request, search,
-and workflow schemas are archived in [REMOVED_TOOLS.md](REMOVED_TOOLS.md).
+repository discovery, commit listing, read-only pull request / merge request (MR)
+listing and lookup, broad MR lookup across accessible repos, and issue workflows.
+Removed Jira, pull request write, search, and workflow schemas are archived in [REMOVED_TOOLS.md](REMOVED_TOOLS.md).
 
 - `who am I on GitHub?`
 - `list my repos sorted by recently pushed`
+- `show recent commits in owner/repo`
+- `show open MRs in owner/repo`
+- `show MR #12 in owner/repo`
+- `look through all my repos and find any open MRs`
 - `show open issues in owner/repo`
 - `show issue #17 in owner/repo`
 - `create an issue in owner/repo titled "Fix flaky login test" with label bug`

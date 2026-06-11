@@ -3,13 +3,14 @@ package main
 import (
 	"encoding/json"
 	"fmt"
+	"strings"
 
 	openai "github.com/sashabaranov/go-openai"
 	"github.com/sashabaranov/go-openai/jsonschema"
 )
 
 // ToolSchemas describes every tool exposed to the LLM.
-// Trimmed to a focused 8-tool GitHub issue workflow. The removed tool schemas
+// Trimmed to a focused GitHub repository and issue workflow. The removed tool schemas
 // (all Jira tools + extra GitHub tools) are archived in REMOVED_TOOLS.md and can
 // be pasted back here to restore them. CallTool still dispatches them if called.
 var ToolSchemas = []openai.Tool{
@@ -41,6 +42,63 @@ var ToolSchemas = []openai.Tool{
 				"repo":  {Type: jsonschema.String},
 			},
 			Required: []string{"owner", "repo"},
+		},
+	}},
+	{Type: openai.ToolTypeFunction, Function: &openai.FunctionDefinition{
+		Name:        "gh_list_commits",
+		Description: "List commits in a GitHub repo.",
+		Parameters: jsonschema.Definition{
+			Type: jsonschema.Object,
+			Properties: map[string]jsonschema.Definition{
+				"owner":    {Type: jsonschema.String},
+				"repo":     {Type: jsonschema.String},
+				"sha":      {Type: jsonschema.String, Description: "branch, tag, or commit SHA to list from"},
+				"path":     {Type: jsonschema.String, Description: "only commits touching this path"},
+				"author":   {Type: jsonschema.String, Description: "GitHub login, name, or email"},
+				"since":    {Type: jsonschema.String, Description: "ISO 8601/RFC3339 timestamp"},
+				"until":    {Type: jsonschema.String, Description: "ISO 8601/RFC3339 timestamp"},
+				"per_page": {Type: jsonschema.Integer},
+			},
+			Required: []string{"owner", "repo"},
+		},
+	}},
+	{Type: openai.ToolTypeFunction, Function: &openai.FunctionDefinition{
+		Name:        "gh_list_pulls",
+		Description: "List pull requests / merge requests (MRs) in a GitHub repo.",
+		Parameters: jsonschema.Definition{
+			Type: jsonschema.Object,
+			Properties: map[string]jsonschema.Definition{
+				"owner":    {Type: jsonschema.String},
+				"repo":     {Type: jsonschema.String},
+				"state":    {Type: jsonschema.String, Description: "open|closed|all"},
+				"per_page": {Type: jsonschema.Integer},
+			},
+			Required: []string{"owner", "repo"},
+		},
+	}},
+	{Type: openai.ToolTypeFunction, Function: &openai.FunctionDefinition{
+		Name:        "gh_get_pull",
+		Description: "Get one pull request / merge request (MR).",
+		Parameters: jsonschema.Definition{
+			Type: jsonschema.Object,
+			Properties: map[string]jsonschema.Definition{
+				"owner":  {Type: jsonschema.String},
+				"repo":   {Type: jsonschema.String},
+				"number": {Type: jsonschema.Integer},
+			},
+			Required: []string{"owner", "repo", "number"},
+		},
+	}},
+	{Type: openai.ToolTypeFunction, Function: &openai.FunctionDefinition{
+		Name:        "gh_find_pull_requests",
+		Description: "Find pull requests / merge requests (MRs) across the authenticated user's accessible repos. Use this when the user asks for MRs across all repos or does not name a specific repo.",
+		Parameters: jsonschema.Definition{
+			Type: jsonschema.Object,
+			Properties: map[string]jsonschema.Definition{
+				"state":     {Type: jsonschema.String, Description: "open|closed|all; defaults to open"},
+				"max_repos": {Type: jsonschema.Integer, Description: "maximum repos to scan; defaults to 50, max 200"},
+				"per_repo":  {Type: jsonschema.Integer, Description: "maximum pull requests per repo; defaults to 10, max 100"},
+			},
 		},
 	}},
 	{Type: openai.ToolTypeFunction, Function: &openai.FunctionDefinition{
@@ -121,14 +179,43 @@ const toolResultMaxBytes = 60000
 
 // toolAliases maps common model-hallucinated tool names to the canonical name.
 var toolAliases = map[string]string{
-	"gh_list_repos":  "gh_list_my_repos",
-	"gh_repos":       "gh_list_my_repos",
-	"list_repos":     "gh_list_my_repos",
-	"list_my_repos":  "gh_list_my_repos",
-	"gh_my_repos":    "gh_list_my_repos",
-	"search_jira":    "search_issues",
-	"jira_search":    "search_issues",
-	"get_jira_issue": "get_issue",
+	"gh_list_repos":          "gh_list_my_repos",
+	"gh_repos":               "gh_list_my_repos",
+	"list_repos":             "gh_list_my_repos",
+	"list_my_repos":          "gh_list_my_repos",
+	"gh_my_repos":            "gh_list_my_repos",
+	"gh_list_prs":            "gh_list_pulls",
+	"gh_list_pull_requests":  "gh_list_pulls",
+	"gh_list_merge_requests": "gh_list_pulls",
+	"gh_list_mrs":            "gh_list_pulls",
+	"gh_find_prs":            "gh_find_pull_requests",
+	"gh_find_pulls":          "gh_find_pull_requests",
+	"gh_find_mrs":            "gh_find_pull_requests",
+	"gh_find_merge_requests": "gh_find_pull_requests",
+	"gh_search_prs":          "gh_find_pull_requests",
+	"gh_search_mrs":          "gh_find_pull_requests",
+	"gh_list_all_prs":        "gh_find_pull_requests",
+	"gh_list_all_mrs":        "gh_find_pull_requests",
+	"find_prs":               "gh_find_pull_requests",
+	"find_mrs":               "gh_find_pull_requests",
+	"find_merge_requests":    "gh_find_pull_requests",
+	"list_all_prs":           "gh_find_pull_requests",
+	"list_all_mrs":           "gh_find_pull_requests",
+	"list_pulls":             "gh_list_pulls",
+	"list_pull_requests":     "gh_list_pulls",
+	"list_merge_requests":    "gh_list_pulls",
+	"list_mrs":               "gh_list_pulls",
+	"gh_get_pr":              "gh_get_pull",
+	"gh_get_pull_request":    "gh_get_pull",
+	"gh_get_merge_request":   "gh_get_pull",
+	"gh_get_mr":              "gh_get_pull",
+	"get_pr":                 "gh_get_pull",
+	"get_pull_request":       "gh_get_pull",
+	"get_merge_request":      "gh_get_pull",
+	"get_mr":                 "gh_get_pull",
+	"search_jira":            "search_issues",
+	"jira_search":            "search_issues",
+	"get_jira_issue":         "get_issue",
 }
 
 // canonicalToolName resolves an alias to its canonical tool name, returning the
@@ -206,9 +293,9 @@ func CallTool(jc *JiraClient, gc *GitHubClient, name, argsJSON string) string {
 
 	// ---------- GitHub ----------
 	case "gh_me", "gh_list_my_repos", "gh_get_repo", "gh_search_repos",
-		"gh_list_issues", "gh_get_issue", "gh_create_issue", "gh_update_issue",
+		"gh_list_commits", "gh_list_issues", "gh_get_issue", "gh_create_issue", "gh_update_issue",
 		"gh_close_issue", "gh_comment_issue", "gh_search_issues",
-		"gh_list_pulls", "gh_get_pull", "gh_create_pull", "gh_merge_pull",
+		"gh_list_pulls", "gh_get_pull", "gh_find_pull_requests", "gh_create_pull", "gh_merge_pull",
 		"gh_list_pr_files", "gh_review_pull",
 		"gh_list_workflows", "gh_run_workflow", "gh_list_workflow_runs", "gh_get_workflow_run",
 		"gh_wait_for_workflow_run", "gh_run_workflow_and_wait":
@@ -255,6 +342,13 @@ func callGitHub(gc *GitHubClient, name string, args map[string]any) (json.RawMes
 	case "gh_search_repos":
 		q, _ := args["query"].(string)
 		return gc.SearchRepos(q, intArg(args["per_page"]))
+	case "gh_list_commits":
+		sha, _ := args["sha"].(string)
+		path, _ := args["path"].(string)
+		author, _ := args["author"].(string)
+		since, _ := args["since"].(string)
+		until, _ := args["until"].(string)
+		return gc.ListCommits(owner, repo, sha, path, author, since, until, intArg(args["per_page"]))
 	case "gh_list_issues":
 		state, _ := args["state"].(string)
 		labels, _ := args["labels"].(string)
@@ -285,6 +379,13 @@ func callGitHub(gc *GitHubClient, name string, args map[string]any) (json.RawMes
 		return gc.ListPulls(owner, repo, state, intArg(args["per_page"]))
 	case "gh_get_pull":
 		return gc.GetPull(owner, repo, number)
+	case "gh_find_pull_requests":
+		maxRepos := intArg(args["max_repos"])
+		if maxRepos == 0 {
+			maxRepos = intArg(args["max_total"])
+		}
+		state, _ := args["state"].(string)
+		return gc.FindPullRequests(state, maxRepos, intArg(args["per_repo"]))
 	case "gh_create_pull":
 		var a GHCreatePullArgs
 		b, _ := json.Marshal(args)
@@ -471,6 +572,9 @@ func trimGitHub(name string, raw json.RawMessage) json.RawMessage {
 	case "gh_search_repos":
 		return slimSearchItems(raw, slimRepo)
 
+	case "gh_list_commits":
+		return slimArray(raw, slimCommit)
+
 	case "gh_list_issues":
 		return slimArray(raw, slimIssue)
 
@@ -485,6 +589,9 @@ func trimGitHub(name string, raw json.RawMessage) json.RawMessage {
 
 	case "gh_list_pulls":
 		return slimArray(raw, slimPull)
+
+	case "gh_find_pull_requests":
+		return slimPullRequestSearch(raw)
 
 	case "gh_list_workflows":
 		var payload struct {
@@ -586,6 +693,26 @@ func slimRepo(m map[string]any) map[string]any {
 	}
 }
 
+func slimCommit(payload map[string]any) map[string]any {
+	if payload == nil {
+		return nil
+	}
+	commit, _ := payload["commit"].(map[string]any)
+	author, _ := commit["author"].(map[string]any)
+	committer, _ := commit["committer"].(map[string]any)
+	message, _ := commit["message"].(string)
+	return map[string]any{
+		"sha":          payload["sha"],
+		"message":      firstLine(message),
+		"author":       nested(payload, "author", "login"),
+		"author_name":  pick(author, "name"),
+		"authored_at":  pick(author, "date"),
+		"committer":    nested(payload, "committer", "login"),
+		"committed_at": pick(committer, "date"),
+		"html_url":     payload["html_url"],
+	}
+}
+
 func slimIssue(m map[string]any) map[string]any {
 	if m == nil {
 		return nil
@@ -615,7 +742,7 @@ func slimPull(m map[string]any) map[string]any {
 	if m == nil {
 		return nil
 	}
-	return map[string]any{
+	out := map[string]any{
 		"number":        m["number"],
 		"title":         m["title"],
 		"state":         m["state"],
@@ -632,6 +759,45 @@ func slimPull(m map[string]any) map[string]any {
 		"updated_at":    m["updated_at"],
 		"html_url":      m["html_url"],
 	}
+	if repo, ok := m["repository"].(string); ok {
+		out["repo"] = repo
+	} else if repo, ok := m["repository"].(map[string]any); ok {
+		out["repo"] = repo["full_name"]
+	}
+	return out
+}
+
+func slimPullRequestSearch(raw json.RawMessage) json.RawMessage {
+	var payload struct {
+		State          string           `json:"state"`
+		MaxRepos       int              `json:"max_repos"`
+		PerRepo        int              `json:"per_repo"`
+		ReposScanned   int              `json:"repos_scanned"`
+		ReposWithPulls int              `json:"repos_with_pulls"`
+		Count          int              `json:"count"`
+		Items          []map[string]any `json:"items"`
+		ErrorCount     int              `json:"error_count"`
+		Errors         []map[string]any `json:"errors"`
+	}
+	if err := json.Unmarshal(raw, &payload); err != nil {
+		return raw
+	}
+	slim := make([]map[string]any, 0, len(payload.Items))
+	for _, m := range payload.Items {
+		slim = append(slim, slimPull(m))
+	}
+	b, _ := json.Marshal(map[string]any{
+		"state":            payload.State,
+		"max_repos":        payload.MaxRepos,
+		"per_repo":         payload.PerRepo,
+		"repos_scanned":    payload.ReposScanned,
+		"repos_with_pulls": payload.ReposWithPulls,
+		"count":            payload.Count,
+		"items":            slim,
+		"error_count":      payload.ErrorCount,
+		"errors":           payload.Errors,
+	})
+	return b
 }
 
 func labelNames(v any) []string {
@@ -736,6 +902,13 @@ func jsonOrRaw(v any, fallback json.RawMessage) json.RawMessage {
 		return fallback
 	}
 	return b
+}
+
+func firstLine(value string) string {
+	if idx := strings.IndexByte(value, '\n'); idx >= 0 {
+		return value[:idx]
+	}
+	return value
 }
 
 // wrapWaitResult packages a workflow run plus a completed flag so the LLM

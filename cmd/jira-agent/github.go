@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"net/url"
 	"os"
+	"strings"
 	"time"
 )
 
@@ -123,6 +124,27 @@ func (c *GitHubClient) GetRepo(owner, repo string) (json.RawMessage, error) {
 	return c.request("GET", "/repos/"+owner+"/"+repo, nil, nil)
 }
 
+func (c *GitHubClient) ListCommits(owner, repo, sha, path, author, since, until string, perPage int) (json.RawMessage, error) {
+	q := url.Values{}
+	if sha != "" {
+		q.Set("sha", sha)
+	}
+	if path != "" {
+		q.Set("path", path)
+	}
+	if author != "" {
+		q.Set("author", author)
+	}
+	if since != "" {
+		q.Set("since", since)
+	}
+	if until != "" {
+		q.Set("until", until)
+	}
+	q.Set("per_page", fmt.Sprintf("%d", clampPerPage(perPage, 25)))
+	return c.request("GET", "/repos/"+owner+"/"+repo+"/commits", q, nil)
+}
+
 func (c *GitHubClient) SearchRepos(query string, perPage int) (json.RawMessage, error) {
 	q := url.Values{}
 	q.Set("q", query)
@@ -203,6 +225,94 @@ func (c *GitHubClient) ListPulls(owner, repo, state string, perPage int) (json.R
 	}
 	q.Set("per_page", fmt.Sprintf("%d", clampPerPage(perPage, 25)))
 	return c.request("GET", "/repos/"+owner+"/"+repo+"/pulls", q, nil)
+}
+
+func (c *GitHubClient) FindPullRequests(state string, maxRepos, perRepo int) (json.RawMessage, error) {
+	state, err := normalizePullState(state)
+	if err != nil {
+		return nil, err
+	}
+	if maxRepos <= 0 {
+		maxRepos = 50
+	}
+	if maxRepos > 200 {
+		maxRepos = 200
+	}
+	perRepo = clampPerPage(perRepo, 10)
+
+	rawRepos, err := c.ListMyRepos("all", "pushed", maxRepos)
+	if err != nil {
+		return nil, err
+	}
+	var repos []map[string]any
+	if err := json.Unmarshal(rawRepos, &repos); err != nil {
+		return nil, err
+	}
+
+	items := make([]map[string]any, 0)
+	repoErrors := make([]map[string]any, 0)
+	reposScanned := 0
+	reposWithPulls := 0
+	for _, repoInfo := range repos {
+		fullName, _ := repoInfo["full_name"].(string)
+		owner, repo, ok := splitRepoFullName(fullName)
+		if !ok {
+			continue
+		}
+		reposScanned++
+		rawPulls, err := c.ListPulls(owner, repo, state, perRepo)
+		if err != nil {
+			if len(repoErrors) < 10 {
+				repoErrors = append(repoErrors, map[string]any{"repo": fullName, "error": err.Error()})
+			}
+			continue
+		}
+		var pulls []map[string]any
+		if err := json.Unmarshal(rawPulls, &pulls); err != nil {
+			return nil, err
+		}
+		if len(pulls) > 0 {
+			reposWithPulls++
+		}
+		for _, pull := range pulls {
+			pull["repository"] = fullName
+			items = append(items, pull)
+		}
+	}
+
+	payload := map[string]any{
+		"state":            state,
+		"max_repos":        maxRepos,
+		"per_repo":         perRepo,
+		"repos_scanned":    reposScanned,
+		"repos_with_pulls": reposWithPulls,
+		"count":            len(items),
+		"items":            items,
+	}
+	if len(repoErrors) > 0 {
+		payload["error_count"] = len(repoErrors)
+		payload["errors"] = repoErrors
+	}
+	return json.Marshal(payload)
+}
+
+func normalizePullState(state string) (string, error) {
+	switch strings.ToLower(strings.TrimSpace(state)) {
+	case "", "open":
+		return "open", nil
+	case "closed", "all":
+		return strings.ToLower(strings.TrimSpace(state)), nil
+	default:
+		return "", fmt.Errorf("state must be open, closed, or all")
+	}
+}
+
+func splitRepoFullName(fullName string) (string, string, bool) {
+	owner, repo, found := strings.Cut(fullName, "/")
+	if !found || owner == "" || repo == "" {
+		return "", "", false
+	}
+	return owner, repo, true
 }
 
 func (c *GitHubClient) GetPull(owner, repo string, number int) (json.RawMessage, error) {

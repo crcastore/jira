@@ -1,8 +1,8 @@
 # Jira + GitHub Agent (Go)
 
-A Go CLI and HTMX web app for working with Jira Cloud and a focused GitHub issue workflow through an OpenAI-compatible tool-calling model.
+A Go CLI and HTMX web app for working with Jira Cloud and a focused GitHub repository and issue workflow through an OpenAI-compatible tool-calling model.
 
-The current model-visible tool set is intentionally small: GitHub identity, repository discovery, issue listing, issue lookup, issue creation, issue closing, and issue comments. The removed Jira, pull request, search, and workflow schemas are archived in [REMOVED_TOOLS.md](REMOVED_TOOLS.md) and can be restored in [cmd/jira-agent/tools.go](cmd/jira-agent/tools.go).
+The current model-visible tool set is intentionally small: GitHub identity, repository discovery, commit listing, read-only pull request / merge request (MR) listing and lookup, broad MR lookup across accessible repos, issue listing, issue lookup, issue creation, issue closing, and issue comments. The removed Jira, pull request write, search, and workflow schemas are archived in [REMOVED_TOOLS.md](REMOVED_TOOLS.md) and can be restored in [cmd/jira-agent/tools.go](cmd/jira-agent/tools.go).
 
 ## Build & Run
 
@@ -69,6 +69,10 @@ Use a model that supports tool calling. Local model quality varies; `llama3.1:8b
 
 - `who am I on GitHub?`
 - `list my repos sorted by recently pushed`
+- `show recent commits in owner/repo`
+- `show open MRs in owner/repo`
+- `show MR #12 in owner/repo`
+- `look through all my repos and find any open MRs`
 - `show open issues in owner/repo`
 - `show issue #17 in owner/repo`
 - `create an issue in owner/repo titled "Fix flaky login test" with label bug`
@@ -82,6 +86,10 @@ Use a model that supports tool calling. Local model quality varies; `llama3.1:8b
 | `gh_me` | Authenticated GitHub user |
 | `gh_list_my_repos` | List repositories for the authenticated user |
 | `gh_get_repo` | Read repository metadata |
+| `gh_list_commits` | List repository commits |
+| `gh_list_pulls` | List repository pull requests / merge requests (MRs) |
+| `gh_get_pull` | Read one pull request / merge request (MR) |
+| `gh_find_pull_requests` | Find pull requests / merge requests (MRs) across accessible repositories |
 | `gh_list_issues` | List repository issues, including PRs returned by the issues API |
 | `gh_get_issue` | Read one issue or PR by number |
 | `gh_create_issue` | Open a GitHub issue |
