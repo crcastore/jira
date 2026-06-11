@@ -139,6 +139,9 @@ func TestHandleJiraCreatePageRendersProjectDropdown(t *testing.T) {
 	if !strings.Contains(body, `<form class="hx-jira-create-form" action="/jira/create" method="post"`) {
 		t.Fatalf("expected native create form, got: %s", body)
 	}
+	if !strings.Contains(body, `https://unpkg.com/htmx.org@1.9.12`) || !strings.Contains(body, `hx-get="/jira/create/pull-requests"`) {
+		t.Fatalf("expected HTMX-enabled create page, got: %s", body)
+	}
 	if !strings.Contains(body, `<select name="project_key"`) || !strings.Contains(body, `SCRUM - My Team`) {
 		t.Fatalf("expected Jira project dropdown in create page, got: %s", body)
 	}
@@ -256,6 +259,175 @@ func TestHandleJiraCreatePostsStandardIssueFields(t *testing.T) {
 	}
 	if !strings.Contains(rr.Body.String(), "SCRUM-12") {
 		t.Fatalf("expected created key in response, got: %s", rr.Body.String())
+	}
+}
+
+func TestHandleJiraCreateAddsPullRequestDetailsToDescription(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		switch r.URL.Path {
+		case "/user/repos":
+			_, _ = w.Write([]byte(`[{"full_name":"octo/hello"}]`))
+			return
+		case "/repos/octo/hello/pulls":
+			_, _ = w.Write([]byte(`[
+				{"number":12,"title":"Add login fix","head":{"ref":"fix-login"},"base":{"ref":"main"}}
+			]`))
+			return
+		case "/repos/octo/hello/pulls/12":
+			if r.Header.Get("Authorization") != "Bearer token" {
+				t.Errorf("Authorization header = %q", r.Header.Get("Authorization"))
+			}
+			_, _ = w.Write([]byte(`{
+				"number": 12,
+				"title": "Add login fix",
+				"state": "open",
+				"html_url": "https://github.com/octo/hello/pull/12",
+				"user": {"login": "octocat"},
+				"head": {"ref": "fix-login"},
+				"base": {"ref": "main"}
+			}`))
+			return
+		case "/repos/octo/hello/pulls/12/files":
+			if got := r.URL.Query().Get("per_page"); got != "100" {
+				t.Errorf("per_page = %q, want 100", got)
+			}
+			_, _ = w.Write([]byte(`[
+				{"filename":"cmd/main.go","status":"modified","additions":12,"deletions":3},
+				{"filename":"README.md","status":"added","additions":5,"deletions":0}
+			]`))
+			return
+		case "/rest/api/3/project/search":
+			_, _ = w.Write([]byte(`{"values":[{"key":"SCRUM","name":"My Team"}]}`))
+			return
+		case "/rest/api/3/user/assignable/search":
+			_, _ = w.Write([]byte(`[]`))
+			return
+		case "/rest/api/3/issue":
+			if r.Method != http.MethodPost {
+				t.Errorf("method = %s, want POST", r.Method)
+			}
+		default:
+			t.Errorf("unexpected path = %s", r.URL.Path)
+			return
+		}
+
+		var payload struct {
+			Fields map[string]any `json:"fields"`
+		}
+		if err := json.NewDecoder(r.Body).Decode(&payload); err != nil {
+			t.Fatalf("decode request: %v", err)
+		}
+		descriptionJSON, err := json.Marshal(payload.Fields["description"])
+		if err != nil {
+			t.Fatalf("marshal description: %v", err)
+		}
+		description := string(descriptionJSON)
+		for _, want := range []string{
+			"Button fails",
+			"Related pull request",
+			"https://github.com/octo/hello/pull/12",
+			"Add login fix",
+			"cmd/main.go (modified, +12/-3)",
+			"README.md (added, +5/-0)",
+		} {
+			if !strings.Contains(description, want) {
+				t.Fatalf("description missing %q: %s", want, description)
+			}
+		}
+		_, _ = w.Write([]byte(`{"key":"SCRUM-44"}`))
+	}))
+	defer server.Close()
+
+	app := &webApp{
+		jc: &JiraClient{baseURL: server.URL, email: "me@example.com", token: "token", http: server.Client()},
+		gc: &GitHubClient{baseURL: server.URL, token: "token", http: server.Client()},
+	}
+	req := httptest.NewRequest(http.MethodPost, "/jira/create", strings.NewReader(url.Values{
+		"project_key":       {"scrum"},
+		"summary":           {"Fix login"},
+		"description":       {"Button fails"},
+		"pull_request_repo": {"octo/hello"},
+		"pull_request":      {"octo/hello#12"},
+	}.Encode()))
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	rr := httptest.NewRecorder()
+
+	app.handleJiraCreatePage(rr, req)
+
+	if rr.Code != http.StatusOK {
+		t.Fatalf("status: got %d want 200", rr.Code)
+	}
+	if !strings.Contains(rr.Body.String(), "SCRUM-44") {
+		t.Fatalf("expected created key in response, got: %s", rr.Body.String())
+	}
+}
+
+func TestHandleJiraCreatePullRequestsRendersOptions(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		if r.URL.Path != "/repos/octo/hello/pulls" {
+			t.Fatalf("unexpected GitHub path: %s", r.URL.Path)
+		}
+		if got := r.URL.Query().Get("state"); got != "all" {
+			t.Errorf("state = %q, want all", got)
+		}
+		if got := r.URL.Query().Get("per_page"); got != "100" {
+			t.Errorf("per_page = %q, want 100", got)
+		}
+		_, _ = w.Write([]byte(`[
+			{"number":12,"title":"Add login fix","state":"open","head":{"ref":"fix-login"},"base":{"ref":"main"}},
+			{"number":7,"title":"Clean up docs","state":"closed","merged_at":"2026-06-10T12:00:00Z","head":{"ref":"docs"},"base":{"ref":"main"}}
+		]`))
+	}))
+	defer server.Close()
+
+	app := &webApp{gc: &GitHubClient{baseURL: server.URL, token: "token", http: server.Client()}}
+	req := httptest.NewRequest(http.MethodGet, "/jira/create/pull-requests?pull_request_repo=octo/hello", nil)
+	rr := httptest.NewRecorder()
+
+	app.handleJiraCreatePullRequests(rr, req)
+
+	if rr.Code != http.StatusOK {
+		t.Fatalf("status: got %d want 200", rr.Code)
+	}
+	body := rr.Body.String()
+	for _, want := range []string{
+		`id="jira-create-pull-requests"`,
+		`<select name="pull_request"`,
+		`value="octo/hello#12"`,
+		`#12 Add login fix (fix-login -&gt; main)`,
+		`value="octo/hello#7"`,
+		`#7 Clean up docs [merged] (docs -&gt; main)`,
+	} {
+		if !strings.Contains(body, want) {
+			t.Fatalf("partial missing %q\n%s", want, body)
+		}
+	}
+}
+
+func TestParsePullRequestReference(t *testing.T) {
+	cases := map[string]pullRequestRef{
+		"https://github.com/octo/hello/pull/12": {Owner: "octo", Repo: "hello", Number: 12},
+		"github.com/octo/hello/pull/12":         {Owner: "octo", Repo: "hello", Number: 12},
+		"octo/hello#12":                         {Owner: "octo", Repo: "hello", Number: 12},
+		"octo/hello!12":                         {Owner: "octo", Repo: "hello", Number: 12},
+		"octo/hello/pull/12":                    {Owner: "octo", Repo: "hello", Number: 12},
+		"octo/hello/12":                         {Owner: "octo", Repo: "hello", Number: 12},
+	}
+	for input, want := range cases {
+		got, err := parsePullRequestReference(input)
+		if err != nil {
+			t.Fatalf("parsePullRequestReference(%q) returned error: %v", input, err)
+		}
+		if got != want {
+			t.Fatalf("parsePullRequestReference(%q) = %+v, want %+v", input, got, want)
+		}
+	}
+	for _, input := range []string{"", "octo/hello", "octo/hello#nope", "https://github.com/octo/hello/issues/12"} {
+		if got, err := parsePullRequestReference(input); err == nil {
+			t.Fatalf("parsePullRequestReference(%q) = %+v, want error", input, got)
+		}
 	}
 }
 

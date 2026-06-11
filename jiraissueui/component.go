@@ -18,13 +18,15 @@ import (
 )
 
 const (
-	DefaultEndpoint    = "/jira/create"
-	DefaultDialogID    = "jira-create-dialog"
-	DefaultResultID    = "jira-create-result"
-	DefaultWorkingID   = "jira-create-working"
-	DefaultButtonLabel = "Create Jira Issue"
-	DefaultTitle       = "Create Jira Issue"
-	DefaultSubmitLabel = "Create Issue"
+	DefaultEndpoint             = "/jira/create"
+	DefaultPullRequestsEndpoint = "/jira/create/pull-requests"
+	DefaultDialogID             = "jira-create-dialog"
+	DefaultResultID             = "jira-create-result"
+	DefaultPullRequestsID       = "jira-create-pull-requests"
+	DefaultWorkingID            = "jira-create-working"
+	DefaultButtonLabel          = "Create Jira Issue"
+	DefaultTitle                = "Create Jira Issue"
+	DefaultSubmitLabel          = "Create Issue"
 )
 
 var (
@@ -47,12 +49,34 @@ type User struct {
 	DisplayName string
 }
 
+// PullRequestRepo is a GitHub repository option shown before selecting a PR/MR.
+type PullRequestRepo struct {
+	FullName string
+	Label    string
+}
+
+// DisplayLabel returns the visible label for a repository option.
+func (r PullRequestRepo) DisplayLabel() string {
+	if r.Label != "" {
+		return r.Label
+	}
+	return r.FullName
+}
+
+// PullRequestOption is a pull request / merge request option for a selected repo.
+type PullRequestOption struct {
+	Value string
+	Label string
+}
+
 // IssueForm is the normalized form payload submitted by the create issue UI.
 type IssueForm struct {
 	ProjectKey        string
 	Summary           string
 	IssueType         string
 	Description       string
+	PullRequestRepo   string
+	PullRequest       string
 	Priority          string
 	Labels            []string
 	AssigneeAccountID string
@@ -73,15 +97,21 @@ type Result struct {
 
 // FormData configures the rendered create issue form.
 type FormData struct {
-	Endpoint    string
-	ResultID    string
-	WorkingID   string
-	SubmitLabel string
+	Endpoint             string
+	PullRequestsEndpoint string
+	ResultID             string
+	PullRequestsID       string
+	WorkingID            string
+	SubmitLabel          string
 
-	Projects     []Project
-	ProjectsErr  string
-	Assignees    []User
-	AssigneesErr string
+	Projects            []Project
+	ProjectsErr         string
+	Assignees           []User
+	AssigneesErr        string
+	PullRequestRepos    []PullRequestRepo
+	PullRequestReposErr string
+	PullRequests        []PullRequestOption
+	PullRequestsErr     string
 
 	IssueTypes []string
 	Priorities []string
@@ -145,8 +175,14 @@ func (d *FormData) applyDefaults() {
 	if d.Endpoint == "" {
 		d.Endpoint = DefaultEndpoint
 	}
+	if d.PullRequestsEndpoint == "" {
+		d.PullRequestsEndpoint = DefaultPullRequestsEndpoint
+	}
 	if d.ResultID == "" {
 		d.ResultID = DefaultResultID
+	}
+	if d.PullRequestsID == "" {
+		d.PullRequestsID = DefaultPullRequestsID
 	}
 	if d.WorkingID == "" {
 		d.WorkingID = DefaultWorkingID
@@ -178,7 +214,7 @@ func New() *Component {
 	return &Component{tmpl: template.Must(template.New("jiraissueui").Funcs(template.FuncMap{
 		"jiraCreateJS": JS,
 		"selected":     selected,
-	}).Parse(formTmpl + resultTmpl + launcherTmpl + dialogTmpl))}
+	}).Parse(formTmpl + pullRequestFieldTmpl + resultTmpl + launcherTmpl + dialogTmpl))}
 }
 
 // RenderForm writes the full embeddable create issue form to w.
@@ -200,6 +236,21 @@ func (c *Component) Form(data FormData) (template.HTML, error) {
 func (c *Component) RenderResult(w io.Writer, data FormData) error {
 	data.applyDefaults()
 	return c.tmpl.ExecuteTemplate(w, "jira-create-result", data)
+}
+
+// RenderPullRequestField writes only the dependent PR/MR select field.
+func (c *Component) RenderPullRequestField(w io.Writer, data FormData) error {
+	data.applyDefaults()
+	return c.tmpl.ExecuteTemplate(w, "jira-create-pull-request-field-wrapper", data)
+}
+
+// PullRequestFieldHTML returns only the dependent PR/MR select field.
+func (c *Component) PullRequestFieldHTML(data FormData) (template.HTML, error) {
+	var buf bytes.Buffer
+	if err := c.RenderPullRequestField(&buf, data); err != nil {
+		return "", err
+	}
+	return template.HTML(buf.String()), nil
 }
 
 // ResultHTML returns only the result target as template.HTML.
@@ -256,6 +307,8 @@ func ParseValues(values url.Values) (IssueForm, error) {
 		Summary:           strings.TrimSpace(values.Get("summary")),
 		IssueType:         strings.TrimSpace(values.Get("issue_type")),
 		Description:       strings.TrimSpace(values.Get("description")),
+		PullRequestRepo:   strings.TrimSpace(values.Get("pull_request_repo")),
+		PullRequest:       strings.TrimSpace(values.Get("pull_request")),
 		Priority:          strings.TrimSpace(values.Get("priority")),
 		Labels:            splitCSV(values.Get("labels")),
 		AssigneeAccountID: strings.TrimSpace(values.Get("assignee_account_id")),
@@ -308,7 +361,9 @@ const formTmpl = `{{define "jira-create-form"}}
   {{template "jira-create-result" .}}
   {{if .ProjectsErr}}<div class="hx-jira-create-warn">Could not load Jira projects: {{.ProjectsErr}}</div>{{end}}
   {{if .AssigneesErr}}<div class="hx-jira-create-warn">Could not load Jira assignees: {{.AssigneesErr}}</div>{{end}}
-  <form class="hx-jira-create-form" action="{{.Endpoint}}" method="post" hx-post="{{.Endpoint}}" hx-target="#{{.ResultID}}" hx-swap="outerHTML" hx-indicator="#{{.WorkingID}}" hx-disabled-elt="find input, find textarea, find select, find button">
+	{{if .PullRequestReposErr}}<div class="hx-jira-create-warn">Could not load GitHub repositories: {{.PullRequestReposErr}}</div>{{end}}
+	{{if .PullRequestsErr}}<div class="hx-jira-create-warn">Could not load pull requests: {{.PullRequestsErr}}</div>{{end}}
+	<form class="hx-jira-create-form" action="{{.Endpoint}}" method="post" hx-post="{{.Endpoint}}" hx-target="#{{.ResultID}}" hx-swap="outerHTML" hx-indicator="#{{.WorkingID}}">
     <div class="hx-jira-create-grid">
       <label class="hx-jira-create-field">Project
         {{if .Projects}}
@@ -325,8 +380,17 @@ const formTmpl = `{{define "jira-create-form"}}
         </select>
       </label>
     </div>
-    <label class="hx-jira-create-field">Summary<input name="summary" type="text" value="{{.Values.Summary}}" autocomplete="off" required></label>
-    <label class="hx-jira-create-field">Description<textarea name="description">{{.Values.Description}}</textarea></label>
+		<label class="hx-jira-create-field">Summary<input name="summary" type="text" value="{{.Values.Summary}}" autocomplete="off" required></label>
+		<label class="hx-jira-create-field">Description<textarea name="description">{{.Values.Description}}</textarea></label>
+		<div class="hx-jira-create-grid">
+			<label class="hx-jira-create-field">Repository
+				<select name="pull_request_repo" hx-get="{{.PullRequestsEndpoint}}" hx-trigger="change" hx-target="#{{.PullRequestsID}}" hx-swap="outerHTML" hx-include="this"{{if not .PullRequestRepos}} disabled{{end}}>
+					<option value="">None</option>
+					{{range .PullRequestRepos}}<option value="{{.FullName}}"{{if selected $.Values.PullRequestRepo .FullName}} selected{{end}}>{{.DisplayLabel}}</option>{{end}}
+				</select>
+			</label>
+			{{template "jira-create-pull-request-field-wrapper" .}}
+		</div>
     <div class="hx-jira-create-grid">
       <label class="hx-jira-create-field">Priority
         <select name="priority">
@@ -354,6 +418,21 @@ const formTmpl = `{{define "jira-create-form"}}
     <button type="submit">{{.SubmitLabel}}</button>
   </form>
 </div>
+{{end}}`
+
+const pullRequestFieldTmpl = `{{define "jira-create-pull-request-field-wrapper"}}
+<div id="{{.PullRequestsID}}">
+	{{template "jira-create-pull-request-field" .}}
+</div>
+{{end}}
+
+{{define "jira-create-pull-request-field"}}
+<label class="hx-jira-create-field">PR / MR
+	<select name="pull_request"{{if not .PullRequests}} disabled{{end}}>
+		<option value="">None</option>
+		{{range .PullRequests}}<option value="{{.Value}}"{{if selected $.Values.PullRequest .Value}} selected{{end}}>{{.Label}}</option>{{end}}
+	</select>
+</label>
 {{end}}`
 
 const resultTmpl = `{{define "jira-create-result"}}

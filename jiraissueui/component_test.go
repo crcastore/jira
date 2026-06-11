@@ -13,6 +13,8 @@ func TestParseValuesNormalizesAndValidatesForm(t *testing.T) {
 		"summary":             {" Fix login "},
 		"issue_type":          {" Bug "},
 		"description":         {" Details "},
+		"pull_request_repo":   {" octo/hello "},
+		"pull_request":        {" octo/hello#12 "},
 		"priority":            {" High "},
 		"labels":              {" auth, frontend, , urgent "},
 		"assignee_account_id": {" 712020:assignee "},
@@ -24,7 +26,7 @@ func TestParseValuesNormalizesAndValidatesForm(t *testing.T) {
 	if form.ProjectKey != "SCRUM" || form.Summary != "Fix login" || form.IssueType != "Bug" {
 		t.Fatalf("unexpected normalized form: %+v", form)
 	}
-	if form.Description != "Details" || form.Priority != "High" {
+	if form.Description != "Details" || form.PullRequestRepo != "octo/hello" || form.PullRequest != "octo/hello#12" || form.Priority != "High" {
 		t.Fatalf("unexpected text fields: %+v", form)
 	}
 	if form.AssigneeAccountID != "712020:assignee" || form.ReporterAccountID != "712020:reporter" {
@@ -84,6 +86,35 @@ func TestFormRendersHTMXAndNativeFormAttributes(t *testing.T) {
 	} {
 		if !strings.Contains(got, want) {
 			t.Fatalf("form missing %q\n%s", want, got)
+		}
+	}
+	for _, blocked := range []string{
+		`hx-disabled-elt=`,
+		`find input, find textarea, find select, find button`,
+	} {
+		if strings.Contains(got, blocked) {
+			t.Fatalf("form includes fragile inherited HTMX selector %q\n%s", blocked, got)
+		}
+	}
+}
+
+func TestFormRendersPullRequestRepoChangeTrigger(t *testing.T) {
+	html, err := New().Form(FormData{
+		PullRequestRepos: []PullRequestRepo{{FullName: "octo/hello"}},
+	})
+	if err != nil {
+		t.Fatalf("Form returned error: %v", err)
+	}
+	got := string(html)
+	for _, want := range []string{
+		`name="pull_request_repo"`,
+		`hx-get="/jira/create/pull-requests"`,
+		`hx-trigger="change"`,
+		`hx-target="#jira-create-pull-requests"`,
+		`hx-include="this"`,
+	} {
+		if !strings.Contains(got, want) {
+			t.Fatalf("repo select missing %q\n%s", want, got)
 		}
 	}
 }
@@ -201,11 +232,15 @@ func TestFormRendersDropdownsAndSelectedValues(t *testing.T) {
 			Summary:           "Fix deploy",
 			IssueType:         "Bug",
 			Description:       "Deploy is blocked",
+			PullRequestRepo:   "octo/hello",
+			PullRequest:       "octo/hello#12",
 			Priority:          "High",
 			Labels:            []string{"deploy", "urgent"},
 			AssigneeAccountID: "a1",
 			ReporterAccountID: "b2",
 		},
+		PullRequestRepos: []PullRequestRepo{{FullName: "octo/hello"}, {FullName: "octo/world"}},
+		PullRequests:     []PullRequestOption{{Value: "octo/hello#12", Label: "#12 Add login fix"}},
 	})
 	if err != nil {
 		t.Fatalf("Form returned error: %v", err)
@@ -216,6 +251,10 @@ func TestFormRendersDropdownsAndSelectedValues(t *testing.T) {
 		`<option value="Bug" selected>Bug</option>`,
 		`value="Fix deploy"`,
 		`Deploy is blocked`,
+		`<select name="pull_request_repo"`,
+		`<option value="octo/hello" selected>octo/hello</option>`,
+		`<select name="pull_request"`,
+		`<option value="octo/hello#12" selected>#12 Add login fix</option>`,
 		`<option value="High" selected>High</option>`,
 		`value="deploy, urgent"`,
 		`<option value="a1" selected>Ada</option>`,

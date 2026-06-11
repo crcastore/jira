@@ -66,6 +66,7 @@ func serveWeb() {
 	mux := http.NewServeMux()
 	mux.HandleFunc("/", app.handleIndex)
 	mux.HandleFunc("/jira/create", app.handleJiraCreatePage)
+	mux.HandleFunc("/jira/create/pull-requests", app.handleJiraCreatePullRequests)
 	mux.Handle("/chat", app.chatHandler())
 	mux.Handle("/api/token-limit", app.tokenLimitHandler())
 	mux.Handle("/api/reset", app.resetHandler())

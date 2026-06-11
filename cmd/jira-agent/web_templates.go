@@ -327,6 +327,7 @@ var createIssuePageTmpl = template.Must(template.New("create-issue-page").Parse(
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>Create Jira Issue</title>
+  <script src="https://unpkg.com/htmx.org@1.9.12"></script>
   <style>
     :root {
       --bg: #f6f7f4;
