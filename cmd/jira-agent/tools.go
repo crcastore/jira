@@ -3,16 +3,15 @@ package main
 import (
 	"encoding/json"
 	"fmt"
-	"strings"
 
 	openai "github.com/sashabaranov/go-openai"
 	"github.com/sashabaranov/go-openai/jsonschema"
 )
 
 // ToolSchemas describes every tool exposed to the LLM.
-// Trimmed to a focused GitHub repo, commit, and issue workflow. The removed tool
-// schemas (all Jira tools + extra GitHub tools) are archived in REMOVED_TOOLS.md
-// and can be pasted back here to restore them. CallTool still dispatches them if called.
+// Trimmed to a focused 8-tool GitHub issue workflow. The removed tool schemas
+// (all Jira tools + extra GitHub tools) are archived in REMOVED_TOOLS.md and can
+// be pasted back here to restore them. CallTool still dispatches them if called.
 var ToolSchemas = []openai.Tool{
 	// ---------- GitHub ----------
 	{Type: openai.ToolTypeFunction, Function: &openai.FunctionDefinition{
@@ -40,24 +39,6 @@ var ToolSchemas = []openai.Tool{
 			Properties: map[string]jsonschema.Definition{
 				"owner": {Type: jsonschema.String},
 				"repo":  {Type: jsonschema.String},
-			},
-			Required: []string{"owner", "repo"},
-		},
-	}},
-	{Type: openai.ToolTypeFunction, Function: &openai.FunctionDefinition{
-		Name:        "gh_list_commits",
-		Description: "List recent commits in a GitHub repository, optionally filtered by branch/SHA, path, author, or time range.",
-		Parameters: jsonschema.Definition{
-			Type: jsonschema.Object,
-			Properties: map[string]jsonschema.Definition{
-				"owner":    {Type: jsonschema.String},
-				"repo":     {Type: jsonschema.String},
-				"sha":      {Type: jsonschema.String, Description: "Branch, tag, or commit SHA to list from"},
-				"path":     {Type: jsonschema.String, Description: "Only commits touching this file path"},
-				"author":   {Type: jsonschema.String, Description: "GitHub username or email"},
-				"since":    {Type: jsonschema.String, Description: "ISO 8601 timestamp lower bound"},
-				"until":    {Type: jsonschema.String, Description: "ISO 8601 timestamp upper bound"},
-				"per_page": {Type: jsonschema.Integer},
 			},
 			Required: []string{"owner", "repo"},
 		},
@@ -224,7 +205,7 @@ func CallTool(jc *JiraClient, gc *GitHubClient, name, argsJSON string) string {
 		raw, err = jc.Myself()
 
 	// ---------- GitHub ----------
-	case "gh_me", "gh_list_my_repos", "gh_get_repo", "gh_search_repos", "gh_list_commits",
+	case "gh_me", "gh_list_my_repos", "gh_get_repo", "gh_search_repos",
 		"gh_list_issues", "gh_get_issue", "gh_create_issue", "gh_update_issue",
 		"gh_close_issue", "gh_comment_issue", "gh_search_issues",
 		"gh_list_pulls", "gh_get_pull", "gh_create_pull", "gh_merge_pull",
@@ -274,13 +255,6 @@ func callGitHub(gc *GitHubClient, name string, args map[string]any) (json.RawMes
 	case "gh_search_repos":
 		q, _ := args["query"].(string)
 		return gc.SearchRepos(q, intArg(args["per_page"]))
-	case "gh_list_commits":
-		sha, _ := args["sha"].(string)
-		path, _ := args["path"].(string)
-		author, _ := args["author"].(string)
-		since, _ := args["since"].(string)
-		until, _ := args["until"].(string)
-		return gc.ListCommits(owner, repo, sha, path, author, since, until, intArg(args["per_page"]))
 	case "gh_list_issues":
 		state, _ := args["state"].(string)
 		labels, _ := args["labels"].(string)
@@ -497,9 +471,6 @@ func trimGitHub(name string, raw json.RawMessage) json.RawMessage {
 	case "gh_search_repos":
 		return slimSearchItems(raw, slimRepo)
 
-	case "gh_list_commits":
-		return slimArray(raw, slimCommit)
-
 	case "gh_list_issues":
 		return slimArray(raw, slimIssue)
 
@@ -638,34 +609,6 @@ func slimIssue(m map[string]any) map[string]any {
 		out["is_pr"] = true
 	}
 	return out
-}
-
-func slimCommit(m map[string]any) map[string]any {
-	if m == nil {
-		return nil
-	}
-	commit, _ := m["commit"].(map[string]any)
-	author, _ := commit["author"].(map[string]any)
-	committer, _ := commit["committer"].(map[string]any)
-	sha, _ := m["sha"].(string)
-	shortSHA := sha
-	if len(shortSHA) > 12 {
-		shortSHA = shortSHA[:12]
-	}
-	message, _ := commit["message"].(string)
-	message = strings.TrimSpace(strings.Split(message, "\n")[0])
-	return map[string]any{
-		"sha":            sha,
-		"short_sha":      shortSHA,
-		"message":        message,
-		"author":         nested(m, "author", "login"),
-		"author_name":    pick(author, "name"),
-		"authored_at":    pick(author, "date"),
-		"committer":      nested(m, "committer", "login"),
-		"committer_name": pick(committer, "name"),
-		"committed_at":   pick(committer, "date"),
-		"html_url":       m["html_url"],
-	}
 }
 
 func slimPull(m map[string]any) map[string]any {
