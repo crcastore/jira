@@ -80,9 +80,10 @@ func (a *webApp) jiraCreateDialog() template.HTML {
 		return jiraCreateFallbackLink()
 	}
 	dialog, err := a.jiraCreateComponent().Dialog(jiraissueui.DialogData{
-		ButtonLabel: "Create",
-		Title:       "Create Jira Issue",
-		Form:        a.jiraCreateFormData(jiraissueui.IssueForm{}, jiraissueui.Result{}),
+		ButtonLabel:   "Create",
+		Title:         "Create Jira Issue",
+		Form:          a.jiraCreateFormData(jiraissueui.IssueForm{}, jiraissueui.Result{}),
+		DisableScript: true,
 	})
 	if err != nil {
 		return jiraCreateFallbackLink()
@@ -96,6 +97,10 @@ func jiraCreateFallbackLink() template.HTML {
 
 func jiraCreateStyleTag() template.HTML {
 	return jiraissueui.StyleTag()
+}
+
+func jiraCreateScriptTag() template.HTML {
+	return jiraissueui.ScriptTag()
 }
 
 func (a *webApp) jiraCreateComponent() *jiraissueui.Component {

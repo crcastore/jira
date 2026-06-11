@@ -219,6 +219,7 @@ var pageTmpl = template.Must(template.New("page").Parse(`<!doctype html>
   </style>
   {{.ChatStyles}}
   {{.JiraCreateStyles}}
+  {{.JiraCreateScript}}
 </head>
 <body>
   <div class="top-shell">

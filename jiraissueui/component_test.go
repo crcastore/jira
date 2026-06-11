@@ -88,6 +88,29 @@ func TestFormRendersHTMXAndNativeFormAttributes(t *testing.T) {
 	}
 }
 
+func TestLauncherRendersStandaloneCreateButton(t *testing.T) {
+	html, err := New().Launcher(LauncherData{
+		Endpoint:    "/tickets/create",
+		DialogID:    "ticket-window",
+		ButtonLabel: "Create ticket",
+	})
+	if err != nil {
+		t.Fatalf("Launcher returned error: %v", err)
+	}
+	got := string(html)
+	for _, want := range []string{
+		`class="hx-jira-create-launcher"`,
+		`data-jira-create-launcher`,
+		`href="/tickets/create"`,
+		`data-jira-create-target="#ticket-window"`,
+		`Create ticket`,
+	} {
+		if !strings.Contains(got, want) {
+			t.Fatalf("launcher missing %q\n%s", want, got)
+		}
+	}
+}
+
 func TestDialogRendersLauncherWindowAndForm(t *testing.T) {
 	html, err := New().Dialog(DialogData{
 		DialogID:    "ticket-window",
@@ -117,6 +140,20 @@ func TestDialogRendersLauncherWindowAndForm(t *testing.T) {
 		if !strings.Contains(got, want) {
 			t.Fatalf("dialog missing %q\n%s", want, got)
 		}
+	}
+}
+
+func TestDialogCanUseSharedScriptInsteadOfInlineScript(t *testing.T) {
+	html, err := New().Dialog(DialogData{DisableScript: true})
+	if err != nil {
+		t.Fatalf("Dialog returned error: %v", err)
+	}
+	got := string(html)
+	if strings.Contains(got, `<script>`) || strings.Contains(got, `window.JiraIssueCreate`) {
+		t.Fatalf("dialog should not include inline script when DisableScript is set:\n%s", got)
+	}
+	if !strings.Contains(got, `data-jira-create-target="#jira-create-dialog"`) {
+		t.Fatalf("dialog launcher missing target id:\n%s", got)
 	}
 }
 
@@ -235,12 +272,18 @@ func TestResultRendering(t *testing.T) {
 	}
 }
 
-func TestStyleTagAndCSSAreScoped(t *testing.T) {
+func TestStyleAndScriptTagsAreScoped(t *testing.T) {
 	css := string(CSS())
 	if !strings.Contains(css, ".hx-jira-create") {
 		t.Fatalf("CSS is not scoped: %s", css)
 	}
 	if !strings.Contains(string(StyleTag()), "<style>") {
 		t.Fatalf("StyleTag missing style wrapper")
+	}
+	if !strings.Contains(string(JS()), "window.JiraIssueCreate") {
+		t.Fatalf("JS missing public controller namespace")
+	}
+	if !strings.Contains(string(ScriptTag()), "<script>") {
+		t.Fatalf("ScriptTag missing script wrapper")
 	}
 }

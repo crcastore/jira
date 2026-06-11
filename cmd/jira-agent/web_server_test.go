@@ -96,6 +96,7 @@ func TestHandleIndexRendersCreateDialogWhenJiraAvailable(t *testing.T) {
 	}
 	body := rr.Body.String()
 	for _, want := range []string{
+		`window.JiraIssueCreate`,
 		`data-jira-create-open`,
 		`class="hx-jira-create-dialog"`,
 		`<form class="hx-jira-create-form" action="/jira/create" method="post"`,

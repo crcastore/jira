@@ -89,12 +89,31 @@ type FormData struct {
 	Result     Result
 }
 
+// LauncherData configures a create issue button that opens a Jira create dialog.
+type LauncherData struct {
+	Endpoint    string
+	DialogID    string
+	ButtonLabel string
+}
+
 // DialogData configures a drop-in create issue launcher and dialog window.
 type DialogData struct {
 	DialogID    string
 	ButtonLabel string
 	Title       string
 	Form        FormData
+
+	// DisableScript omits the inline launcher controller. Use this when the host
+	// page includes ScriptTag once globally.
+	DisableScript bool
+}
+
+func (d DialogData) LauncherData() LauncherData {
+	return LauncherData{
+		Endpoint:    d.Form.Endpoint,
+		DialogID:    d.DialogID,
+		ButtonLabel: d.ButtonLabel,
+	}
 }
 
 func (d *DialogData) applyDefaults() {
@@ -108,6 +127,18 @@ func (d *DialogData) applyDefaults() {
 		d.Title = DefaultTitle
 	}
 	d.Form.applyDefaults()
+}
+
+func (d *LauncherData) applyDefaults() {
+	if d.Endpoint == "" {
+		d.Endpoint = DefaultEndpoint
+	}
+	if d.DialogID == "" {
+		d.DialogID = DefaultDialogID
+	}
+	if d.ButtonLabel == "" {
+		d.ButtonLabel = DefaultButtonLabel
+	}
 }
 
 func (d *FormData) applyDefaults() {
@@ -145,8 +176,9 @@ type Component struct {
 // New returns a ready-to-use Component.
 func New() *Component {
 	return &Component{tmpl: template.Must(template.New("jiraissueui").Funcs(template.FuncMap{
-		"selected": selected,
-	}).Parse(formTmpl + resultTmpl + dialogTmpl))}
+		"jiraCreateJS": JS,
+		"selected":     selected,
+	}).Parse(formTmpl + resultTmpl + launcherTmpl + dialogTmpl))}
 }
 
 // RenderForm writes the full embeddable create issue form to w.
@@ -174,6 +206,21 @@ func (c *Component) RenderResult(w io.Writer, data FormData) error {
 func (c *Component) ResultHTML(data FormData) (template.HTML, error) {
 	var buf bytes.Buffer
 	if err := c.RenderResult(&buf, data); err != nil {
+		return "", err
+	}
+	return template.HTML(buf.String()), nil
+}
+
+// RenderLauncher writes a self-contained create button launcher for a dialog.
+func (c *Component) RenderLauncher(w io.Writer, data LauncherData) error {
+	data.applyDefaults()
+	return c.tmpl.ExecuteTemplate(w, "jira-create-launcher", data)
+}
+
+// Launcher returns a self-contained create button launcher as template.HTML.
+func (c *Component) Launcher(data LauncherData) (template.HTML, error) {
+	var buf bytes.Buffer
+	if err := c.RenderLauncher(&buf, data); err != nil {
 		return "", err
 	}
 	return template.HTML(buf.String()), nil
@@ -228,6 +275,16 @@ func StyleTag() template.HTML {
 // CSS returns the raw scoped CSS.
 func CSS() template.CSS {
 	return template.CSS(componentCSS)
+}
+
+// ScriptTag returns the launcher controller wrapped in a <script> tag.
+func ScriptTag() template.HTML {
+	return template.HTML("<script>" + componentJS + "</script>")
+}
+
+// JS returns the raw launcher controller script.
+func JS() template.JS {
+	return template.JS(componentJS)
 }
 
 func splitCSV(raw string) []string {
@@ -306,9 +363,19 @@ const resultTmpl = `{{define "jira-create-result"}}
 </div>
 {{end}}`
 
+const launcherTmpl = `{{define "jira-create-launcher"}}
+<div class="hx-jira-create-launcher" data-jira-create-launcher>
+	{{template "jira-create-launcher-button" .}}
+</div>
+{{end}}
+
+{{define "jira-create-launcher-button"}}
+<a class="hx-jira-create-button" href="{{.Endpoint}}" data-jira-create-open data-jira-create-target="#{{.DialogID}}">{{.ButtonLabel}}</a>
+{{end}}`
+
 const dialogTmpl = `{{define "jira-create-dialog"}}
 <div class="hx-jira-create-launcher" data-jira-create-launcher>
-	<a class="hx-jira-create-button" href="{{.Form.Endpoint}}" data-jira-create-open>{{.ButtonLabel}}</a>
+	{{template "jira-create-launcher-button" .LauncherData}}
 	<dialog class="hx-jira-create-dialog" id="{{.DialogID}}" data-jira-create-dialog>
 		<div class="hx-jira-create-window">
 			<header class="hx-jira-create-window-head">
@@ -320,15 +387,40 @@ const dialogTmpl = `{{define "jira-create-dialog"}}
 			</div>
 		</div>
 	</dialog>
+	{{if not .DisableScript}}
 	<script>
-	(function(){
-		var root = document.currentScript ? document.currentScript.closest('[data-jira-create-launcher]') : null;
+	{{jiraCreateJS}}
+	</script>
+	{{end}}
+</div>
+{{end}}`
+
+const componentJS = `
+(function(){
+	if(window.JiraIssueCreate && window.JiraIssueCreate.ready){
+		window.JiraIssueCreate.initAll(document);
+		return;
+	}
+
+	function findDialog(root, opener){
+		var target = opener.getAttribute('data-jira-create-target') || root.getAttribute('data-jira-create-target');
+		if(target){
+			try {
+				var externalDialog = document.querySelector(target);
+				if(externalDialog){ return externalDialog; }
+			} catch(error) {}
+		}
+		return root.querySelector('[data-jira-create-dialog]');
+	}
+
+	function initLauncher(root){
 		if(!root || root.dataset.jiraCreateReady){ return; }
-		root.dataset.jiraCreateReady = "1";
 		var opener = root.querySelector('[data-jira-create-open]');
-		var dialog = root.querySelector('[data-jira-create-dialog]');
-		var close = root.querySelector('[data-jira-create-close]');
-		if(!opener || !dialog || !dialog.showModal){ return; }
+		if(!opener){ return; }
+		var dialog = findDialog(root, opener);
+		if(!dialog || !dialog.showModal){ return; }
+		var close = dialog.querySelector('[data-jira-create-close]') || root.querySelector('[data-jira-create-close]');
+		root.dataset.jiraCreateReady = "1";
 		opener.addEventListener('click', function(event){
 			event.preventDefault();
 			if(!dialog.open){ dialog.showModal(); }
@@ -337,16 +429,42 @@ const dialogTmpl = `{{define "jira-create-dialog"}}
 		dialog.addEventListener('click', function(event){
 			if(event.target === dialog){ dialog.close(); }
 		});
-		document.body.addEventListener('htmx:afterSwap', function(event){
-			if(event.target && dialog.contains(event.target) && event.detail && event.detail.successful){
-				var link = event.target.querySelector('.hx-jira-create-notice a');
-				if(link){ setTimeout(function(){ dialog.close(); }, 700); }
-			}
-		});
-	})();
-	</script>
-</div>
-{{end}}`
+	}
+
+	function initAll(scope){
+		var roots = (scope || document).querySelectorAll('[data-jira-create-launcher]');
+		for(var i = 0; i < roots.length; i++){ initLauncher(roots[i]); }
+	}
+
+	function closeCreatedDialog(target, detail){
+		if(!target || !detail || !detail.successful || !target.closest){ return; }
+		var dialog = target.closest('[data-jira-create-dialog]');
+		if(!dialog){ return; }
+		var link = target.querySelector ? target.querySelector('.hx-jira-create-notice a') : null;
+		if(link){ setTimeout(function(){ dialog.close(); }, 700); }
+	}
+
+	window.JiraIssueCreate = {
+		ready: true,
+		init: initLauncher,
+		initAll: initAll
+	};
+
+	var currentRoot = document.currentScript ? document.currentScript.closest('[data-jira-create-launcher]') : null;
+	if(currentRoot){ initLauncher(currentRoot); }
+
+	if(document.readyState === "loading"){
+		document.addEventListener('DOMContentLoaded', function(){ initAll(document); });
+	} else {
+		initAll(document);
+	}
+
+	document.addEventListener('htmx:afterSwap', function(event){
+		initAll(document);
+		closeCreatedDialog(event.target, event.detail);
+	});
+})();
+`
 
 const componentCSS = `
 .hx-jira-create {

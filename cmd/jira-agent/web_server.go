@@ -115,6 +115,7 @@ func (a *webApp) handleIndex(w http.ResponseWriter, r *http.Request) {
 		"GitHubReady":      a.gc != nil,
 		"ChatStyles":       chatui.StyleTag(),
 		"JiraCreateStyles": jiraCreateStyleTag(),
+		"JiraCreateScript": jiraCreateScriptTag(),
 		"JiraCreateDialog": a.jiraCreateDialog(),
 		"ChatWidget":       widget,
 		"MaxContextTokens": a.currentMaxContextTokens(),

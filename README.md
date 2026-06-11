@@ -103,6 +103,7 @@ Use a model that supports tool calling. Local model quality varies; `llama3.1:8b
 | [chat/](chat/) | Tool-calling chat engine and session store |
 | [chathttp/](chathttp/) | Reusable HTMX chat, reset, and token-limit handlers |
 | [chatui/](chatui/) | Drop-in HTMX chat widget |
+| [jiraissueui/](jiraissueui/) | Drop-in HTMX Jira issue create button, dialog, form, and parser. See [JIRA_ISSUE_UI.md](JIRA_ISSUE_UI.md). |
 
 ## Test
 
