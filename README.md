@@ -69,6 +69,7 @@ Use a model that supports tool calling. Local model quality varies; `llama3.1:8b
 
 - `who am I on GitHub?`
 - `list my repos sorted by recently pushed`
+- `show recent commits in owner/repo`
 - `show open issues in owner/repo`
 - `show issue #17 in owner/repo`
 - `create an issue in owner/repo titled "Fix flaky login test" with label bug`
@@ -82,6 +83,7 @@ Use a model that supports tool calling. Local model quality varies; `llama3.1:8b
 | `gh_me` | Authenticated GitHub user |
 | `gh_list_my_repos` | List repositories for the authenticated user |
 | `gh_get_repo` | Read repository metadata |
+| `gh_list_commits` | List recent repository commits, with optional branch/path/author/time filters |
 | `gh_list_issues` | List repository issues, including PRs returned by the issues API |
 | `gh_get_issue` | Read one issue or PR by number |
 | `gh_create_issue` | Open a GitHub issue |

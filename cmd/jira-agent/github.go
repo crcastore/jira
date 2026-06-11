@@ -130,6 +130,27 @@ func (c *GitHubClient) SearchRepos(query string, perPage int) (json.RawMessage, 
 	return c.request("GET", "/search/repositories", q, nil)
 }
 
+func (c *GitHubClient) ListCommits(owner, repo, sha, path, author, since, until string, perPage int) (json.RawMessage, error) {
+	q := url.Values{}
+	if sha != "" {
+		q.Set("sha", sha)
+	}
+	if path != "" {
+		q.Set("path", path)
+	}
+	if author != "" {
+		q.Set("author", author)
+	}
+	if since != "" {
+		q.Set("since", since)
+	}
+	if until != "" {
+		q.Set("until", until)
+	}
+	q.Set("per_page", fmt.Sprintf("%d", clampPerPage(perPage, 20)))
+	return c.request("GET", "/repos/"+owner+"/"+repo+"/commits", q, nil)
+}
+
 // ---------- Issues ----------
 
 func (c *GitHubClient) ListIssues(owner, repo, state, labels, assignee string, perPage int) (json.RawMessage, error) {
