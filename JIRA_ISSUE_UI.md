@@ -2,7 +2,9 @@
 
 This is a handoff guide for another Copilot or engineer who needs to pull the Jira ticket creation button/dialog/form out of this repo and put it into another Go + HTMX project.
 
-The reusable code is already isolated in [jiraissueui/component.go](jiraissueui/component.go#L1-L600). The app-specific files under [cmd/jira-agent/](cmd/jira-agent/) are examples of how this repo wires that reusable package to its own Jira client and templates.
+For a fuller explanation of the complete create-ticket flow, including GitHub repository selection, PR/MR selection, changed-file fetching, and Jira description enrichment, see [JIRA_CREATE_EXTRACTION.md](JIRA_CREATE_EXTRACTION.md).
+
+The reusable form code is isolated in [jiraissueui/component.go](jiraissueui/component.go#L1-L600). The reusable GitHub repository + PR/MR picker and changed-file enrichment logic is isolated in [githubpr/picker.go](githubpr/picker.go). The app-specific files under [cmd/jira-agent/](cmd/jira-agent/) are examples of how this repo wires those reusable packages to its own Jira and GitHub clients.
 
 ## What To Copy
 
@@ -12,6 +14,8 @@ Copy or import the reusable package first. Do not start by copying the dashboard
 | --- | --- | --- | --- |
 | [jiraissueui/component.go](jiraissueui/component.go#L1-L600) | `jiraissueui/component.go` or `internal/jiraissueui/component.go` | yes | This is the whole reusable package: button, dialog, form, parser, CSS, and JS controller. Copy the entire file if you are vendoring the code. |
 | [jiraissueui/component_test.go](jiraissueui/component_test.go#L1-L289) | `jiraissueui/component_test.go` or `internal/jiraissueui/component_test.go` | recommended | Copy with the package so the target project can prove the extraction still renders and parses correctly. |
+| [githubpr/picker.go](githubpr/picker.go) | `githubpr/picker.go` or `internal/githubpr/picker.go` | yes, for repo + PR/MR picker | Contains the stealable GitHub logic: list repositories, list all-state PR/MR options, parse PR/MR references, fetch PR/MR details, fetch changed files, and append those details to `jiraissueui.IssueForm.Description`. |
+| [githubpr/picker_test.go](githubpr/picker_test.go) | `githubpr/picker_test.go` or `internal/githubpr/picker_test.go` | recommended | Tests the exact flow people usually break: selected repo -> selected PR/MR -> changed files in the Jira description. |
 | [cmd/jira-agent/web_create.go](cmd/jira-agent/web_create.go#L17-L163) | target app handler, for example `internal/web/jira_create.go` | reference only | Use as a model for GET, POST, HTMX fragment response, and Jira create mapping. Do not copy unchanged. |
 | [cmd/jira-agent/web_data.go](cmd/jira-agent/web_data.go#L109-L157) | target Jira adapter, for example `internal/jira/options.go` | reference only | Shows how Jira REST JSON is mapped into `jiraissueui.Project` and `jiraissueui.User`. |
 | [cmd/jira-agent/web_server.go](cmd/jira-agent/web_server.go#L15-L21) | target app state struct | reference only | Shows import + storing `*jiraissueui.Component` on the app. |
@@ -20,6 +24,31 @@ Copy or import the reusable package first. Do not start by copying the dashboard
 | [cmd/jira-agent/web_templates.go](cmd/jira-agent/web_templates.go#L220-L222) | target layout `<head>` | reference only | Shows where to render `jiraissueui.StyleTag()` and `jiraissueui.ScriptTag()`. |
 | [cmd/jira-agent/web_templates.go](cmd/jira-agent/web_templates.go#L258-L262) | target page body | reference only | Shows where the rendered create button/dialog is inserted. |
 | [cmd/jira-agent/web_templates.go](cmd/jira-agent/web_templates.go#L324-L413) | optional dedicated create page | reference only | Shows a full-page form route in addition to the modal button. |
+
+## Pulling Out Repository + PR/MR Selection
+
+Use [githubpr/picker.go](githubpr/picker.go) when you want the GitHub part without copying this app's `webApp` wiring. The target app only needs to provide a client with these methods:
+
+```go
+type Client interface {
+    ListMyRepos(visibility, sort string, maxTotal int) (json.RawMessage, error)
+    ListPulls(owner, repo, state string, perPage int) (json.RawMessage, error)
+    GetPull(owner, repo string, number int) (json.RawMessage, error)
+    ListPullFiles(owner, repo string, number, perPage int) (json.RawMessage, error)
+}
+```
+
+The picker is intentionally small:
+
+```go
+picker := githubpr.NewPicker(githubClient)
+
+repos, err := picker.Repositories()
+pulls, err := picker.PullRequests("owner/repo")
+enrichedForm, err := picker.EnrichIssue(form)
+```
+
+`Repositories()` feeds `jiraissueui.FormData.PullRequestRepos`. `PullRequests(repo)` feeds the dependent `jiraissueui.FormData.PullRequests` fragment for `/jira/create/pull-requests`. `EnrichIssue(form)` parses `form.PullRequest`, fetches the PR/MR, fetches changed files, sets `form.PullRequestRepo` when it was empty, and appends a description block with the repository, PR/MR URL/number/title/branches, and changed files.
 
 ## Important Source Line Map
 
@@ -81,8 +110,11 @@ A clean target app usually needs these files or equivalents:
 | --- | --- |
 | `jiraissueui/component.go` | Copied reusable package, or omit if importing from this module. |
 | `jiraissueui/component_test.go` | Copied tests for parser/rendering/assets. |
+| `githubpr/picker.go` | Copied reusable GitHub repository + PR/MR picker, or omit if importing from this module. |
+| `githubpr/picker_test.go` | Copied tests for repository options, PR/MR options, parsing, and changed-file enrichment. |
 | `internal/web/jira_create.go` | Target app handler that renders the dialog/form and handles POSTs. |
 | `internal/jira/client.go` | Target app Jira client. It must list projects, list assignable users, and create issues. |
+| `internal/github/client.go` | Target app GitHub client. It must satisfy `githubpr.Client` to list repos, list PR/MRs, get a PR/MR, and list changed files. |
 | `internal/web/templates.go` or `.gohtml` templates | Page layout with HTMX, `JiraCreateStyles`, `JiraCreateScript`, and the rendered button/dialog. |
 | `cmd/<app>/main.go` | Route registration for `/jira/create` and the page containing the button. |
 
@@ -100,6 +132,7 @@ import (
     "net/http"
     "strings"
 
+    "your/module/githubpr"
     "your/module/jiraissueui"
 )
 
@@ -111,13 +144,15 @@ type JiraCreateService interface {
 
 type JiraCreateHandler struct {
     Jira     JiraCreateService
+    GitHub   githubpr.Client
     UI       *jiraissueui.Component
     Endpoint string
 }
 
-func NewJiraCreateHandler(jira JiraCreateService) JiraCreateHandler {
+func NewJiraCreateHandler(jira JiraCreateService, github githubpr.Client) JiraCreateHandler {
     return JiraCreateHandler{
         Jira:     jira,
+        GitHub:   github,
         UI:       jiraissueui.New(),
         Endpoint: "/jira/create",
     }
@@ -170,6 +205,25 @@ func (h JiraCreateHandler) Dialog() template.HTML {
     return dialog
 }
 
+func (h JiraCreateHandler) ServePullRequests(w http.ResponseWriter, r *http.Request) {
+    if r.Method != http.MethodGet {
+        http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+        return
+    }
+    values := jiraissueui.IssueForm{
+        PullRequestRepo: strings.TrimSpace(r.URL.Query().Get("pull_request_repo")),
+        PullRequest:     strings.TrimSpace(r.URL.Query().Get("pull_request")),
+    }
+    pulls, pullsErr := githubpr.NewPicker(h.GitHub).PullRequests(values.PullRequestRepo)
+    w.Header().Set("Content-Type", "text/html; charset=utf-8")
+    _ = h.component().RenderPullRequestField(w, jiraissueui.FormData{
+        PullRequestsEndpoint: h.pullRequestsEndpoint(),
+        PullRequests:         pulls,
+        PullRequestsErr:      errorText(pullsErr),
+        Values:               values,
+    })
+}
+
 func (h JiraCreateHandler) formData(values jiraissueui.IssueForm, result jiraissueui.Result) jiraissueui.FormData {
     endpoint := h.Endpoint
     if endpoint == "" {
@@ -182,20 +236,37 @@ func (h JiraCreateHandler) formData(values jiraissueui.IssueForm, result jiraiss
     }
 
     assignees, assigneesErr := h.Jira.SearchAssignableUsers(values.ProjectKey)
+    if values.PullRequestRepo == "" && values.PullRequest != "" {
+        if ref, err := githubpr.ParseReference(values.PullRequest); err == nil {
+            values.PullRequestRepo = ref.FullName()
+        }
+    }
+    picker := githubpr.NewPicker(h.GitHub)
+    repos, reposErr := picker.Repositories()
+    pulls, pullsErr := picker.PullRequests(values.PullRequestRepo)
 
     return jiraissueui.FormData{
-        Endpoint:     endpoint,
-        Projects:     projects,
-        ProjectsErr:  errorText(projectsErr),
-        Assignees:    assignees,
-        AssigneesErr: errorText(assigneesErr),
-        Values:       values,
-        Result:       result,
+        Endpoint:             endpoint,
+        PullRequestsEndpoint: h.pullRequestsEndpoint(),
+        Projects:             projects,
+        ProjectsErr:          errorText(projectsErr),
+        Assignees:            assignees,
+        AssigneesErr:         errorText(assigneesErr),
+        PullRequestRepos:     repos,
+        PullRequestReposErr:  errorText(reposErr),
+        PullRequests:         pulls,
+        PullRequestsErr:      errorText(pullsErr),
+        Values:               values,
+        Result:               result,
     }
 }
 
 func (h JiraCreateHandler) createFromRequest(r *http.Request) (jiraissueui.IssueForm, jiraissueui.Result) {
     form, err := jiraissueui.ParseRequest(r)
+    if err != nil {
+        return form, jiraissueui.Result{Err: err.Error()}
+    }
+    form, err = githubpr.NewPicker(h.GitHub).EnrichIssue(form)
     if err != nil {
         return form, jiraissueui.Result{Err: err.Error()}
     }
@@ -212,6 +283,13 @@ func (h JiraCreateHandler) component() *jiraissueui.Component {
         return h.UI
     }
     return jiraissueui.New()
+}
+
+func (h JiraCreateHandler) pullRequestsEndpoint() string {
+    if h.Endpoint == "" {
+        return "/jira/create/pull-requests"
+    }
+    return strings.TrimRight(h.Endpoint, "/") + "/pull-requests"
 }
 
 func selectedProject(r *http.Request) string {
@@ -253,7 +331,7 @@ This mirrors [cmd/jira-agent/web_templates.go](cmd/jira-agent/web_templates.go#L
 The page handler that renders this layout should pass:
 
 ```go
-createHandler := web.NewJiraCreateHandler(jiraClient)
+createHandler := web.NewJiraCreateHandler(jiraClient, githubClient)
 
 data := map[string]any{
     "JiraCreateStyles": jiraissueui.StyleTag(),
@@ -269,13 +347,14 @@ This mirrors [cmd/jira-agent/web_server.go](cmd/jira-agent/web_server.go#L112-L1
 Register the create endpoint in the target app startup:
 
 ```go
-jiraCreate := web.NewJiraCreateHandler(jiraClient)
+jiraCreate := web.NewJiraCreateHandler(jiraClient, githubClient)
 
 mux := http.NewServeMux()
 mux.Handle("/jira/create", jiraCreate)
+mux.HandleFunc("/jira/create/pull-requests", jiraCreate.ServePullRequests)
 ```
 
-This mirrors [cmd/jira-agent/web_server.go](cmd/jira-agent/web_server.go#L66-L68). The endpoint must match `FormData.Endpoint`; the default is `/jira/create` from [jiraissueui/component.go](jiraissueui/component.go#L20-L28).
+This mirrors [cmd/jira-agent/web_server.go](cmd/jira-agent/web_server.go#L66-L68). The create endpoint must match `FormData.Endpoint`; the dependent PR/MR endpoint must match `FormData.PullRequestsEndpoint`.
 
 ## Jira Client Mapping
 
@@ -306,6 +385,7 @@ When creating an issue, convert `jiraissueui.IssueForm` into the target Jira cli
 | `Description` | `description` | Plain text from the textarea. |
 | `Priority` | `priority` | Empty string means no priority. |
 | `Labels` | `labels` | Comma-separated input parsed into `[]string`. |
+| `SubtaskNames` | `subtask_names` | Comma/newline/semicolon-separated names. The source app creates one child `Sub-task` per name. |
 | `AssigneeAccountID` | `assignee_account_id` | Empty string means unassigned/default behavior. |
 | `ReporterAccountID` | `reporter_account_id` | Empty string means Jira default behavior. |
 

@@ -327,6 +327,7 @@ var createIssuePageTmpl = template.Must(template.New("create-issue-page").Parse(
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>Create Jira Issue</title>
+  <script src="https://unpkg.com/htmx.org@1.9.12"></script>
   <style>
     :root {
       --bg: #f6f7f4;
@@ -393,6 +394,7 @@ var createIssuePageTmpl = template.Must(template.New("create-issue-page").Parse(
     .hx-jira-create { --jira-create-accent: linear-gradient(135deg, var(--accent), var(--accent-2)); }
   </style>
   {{.CreateStyles}}
+  {{.CreateScript}}
 </head>
 <body>
   <div class="top-shell">

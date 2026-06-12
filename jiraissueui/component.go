@@ -18,13 +18,18 @@ import (
 )
 
 const (
-	DefaultEndpoint    = "/jira/create"
-	DefaultDialogID    = "jira-create-dialog"
-	DefaultResultID    = "jira-create-result"
-	DefaultWorkingID   = "jira-create-working"
-	DefaultButtonLabel = "Create Jira Issue"
-	DefaultTitle       = "Create Jira Issue"
-	DefaultSubmitLabel = "Create Issue"
+	DefaultEndpoint             = "/jira/create"
+	DefaultPullRequestsEndpoint = "/jira/create/pull-requests"
+	DefaultUsersEndpoint        = "/jira/create/users"
+	DefaultDialogID             = "jira-create-dialog"
+	DefaultResultID             = "jira-create-result"
+	DefaultPullRequestsID       = "jira-create-pull-requests"
+	DefaultAssigneeOptionsID    = "jira-create-assignee-options"
+	DefaultReporterOptionsID    = "jira-create-reporter-options"
+	DefaultWorkingID            = "jira-create-working"
+	DefaultButtonLabel          = "Create Jira Issue"
+	DefaultTitle                = "Create Jira Issue"
+	DefaultSubmitLabel          = "Create Issue"
 )
 
 var (
@@ -41,10 +46,30 @@ type Project struct {
 	Name string
 }
 
-// User is a Jira user option shown in assignee and reporter dropdowns.
+// User is a Jira user option shown in assignee and reporter search results.
 type User struct {
 	AccountID   string
 	DisplayName string
+}
+
+// PullRequestRepo is a GitHub repository option shown before selecting a PR/MR.
+type PullRequestRepo struct {
+	FullName string
+	Label    string
+}
+
+// DisplayLabel returns the visible label for a repository option.
+func (r PullRequestRepo) DisplayLabel() string {
+	if r.Label != "" {
+		return r.Label
+	}
+	return r.FullName
+}
+
+// PullRequestOption is a pull request / merge request option for a selected repo.
+type PullRequestOption struct {
+	Value string
+	Label string
 }
 
 // IssueForm is the normalized form payload submitted by the create issue UI.
@@ -53,8 +78,11 @@ type IssueForm struct {
 	Summary           string
 	IssueType         string
 	Description       string
+	PullRequestRepo   string
+	PullRequest       string
 	Priority          string
 	Labels            []string
+	SubtaskNames      []string
 	AssigneeAccountID string
 	ReporterAccountID string
 }
@@ -64,29 +92,57 @@ func (f IssueForm) LabelsCSV() string {
 	return strings.Join(f.Labels, ", ")
 }
 
-// Result is rendered above the form after a create attempt.
-type Result struct {
+// SubtaskNamesText returns subtask names in the multiline format accepted by the form.
+func (f IssueForm) SubtaskNamesText() string {
+	return strings.Join(f.SubtaskNames, "\n")
+}
+
+// IssueLink is a compact created issue reference rendered in create results.
+type IssueLink struct {
 	Key string
 	URL string
-	Err string
+}
+
+// Result is rendered above the form after a create attempt.
+type Result struct {
+	Key      string
+	URL      string
+	Subtasks []IssueLink
+	Err      string
 }
 
 // FormData configures the rendered create issue form.
 type FormData struct {
-	Endpoint    string
-	ResultID    string
-	WorkingID   string
-	SubmitLabel string
+	Endpoint             string
+	PullRequestsEndpoint string
+	UsersEndpoint        string
+	ResultID             string
+	PullRequestsID       string
+	AssigneeOptionsID    string
+	ReporterOptionsID    string
+	WorkingID            string
+	SubmitLabel          string
 
-	Projects     []Project
-	ProjectsErr  string
-	Assignees    []User
-	AssigneesErr string
+	Projects            []Project
+	ProjectsErr         string
+	IssueTypesErr       string
+	Assignees           []User
+	AssigneesErr        string
+	PullRequestRepos    []PullRequestRepo
+	PullRequestReposErr string
+	PullRequests        []PullRequestOption
+	PullRequestsErr     string
 
 	IssueTypes []string
 	Priorities []string
 	Values     IssueForm
 	Result     Result
+}
+
+// UserOptionsData configures a replaceable datalist of Jira user search results.
+type UserOptionsData struct {
+	OptionsID string
+	Users     []User
 }
 
 // LauncherData configures a create issue button that opens a Jira create dialog.
@@ -145,8 +201,23 @@ func (d *FormData) applyDefaults() {
 	if d.Endpoint == "" {
 		d.Endpoint = DefaultEndpoint
 	}
+	if d.PullRequestsEndpoint == "" {
+		d.PullRequestsEndpoint = DefaultPullRequestsEndpoint
+	}
+	if d.UsersEndpoint == "" {
+		d.UsersEndpoint = DefaultUsersEndpoint
+	}
 	if d.ResultID == "" {
 		d.ResultID = DefaultResultID
+	}
+	if d.PullRequestsID == "" {
+		d.PullRequestsID = DefaultPullRequestsID
+	}
+	if d.AssigneeOptionsID == "" {
+		d.AssigneeOptionsID = DefaultAssigneeOptionsID
+	}
+	if d.ReporterOptionsID == "" {
+		d.ReporterOptionsID = DefaultReporterOptionsID
 	}
 	if d.WorkingID == "" {
 		d.WorkingID = DefaultWorkingID
@@ -154,7 +225,7 @@ func (d *FormData) applyDefaults() {
 	if d.SubmitLabel == "" {
 		d.SubmitLabel = DefaultSubmitLabel
 	}
-	if len(d.IssueTypes) == 0 {
+	if len(d.IssueTypes) == 0 && d.IssueTypesErr == "" {
 		d.IssueTypes = append([]string(nil), DefaultIssueTypes...)
 	}
 	if len(d.Priorities) == 0 {
@@ -163,7 +234,7 @@ func (d *FormData) applyDefaults() {
 	if d.Values.ProjectKey == "" && len(d.Projects) > 0 {
 		d.Values.ProjectKey = d.Projects[0].Key
 	}
-	if d.Values.IssueType == "" {
+	if d.Values.IssueType == "" && len(d.IssueTypes) > 0 {
 		d.Values.IssueType = d.IssueTypes[0]
 	}
 }
@@ -178,7 +249,7 @@ func New() *Component {
 	return &Component{tmpl: template.Must(template.New("jiraissueui").Funcs(template.FuncMap{
 		"jiraCreateJS": JS,
 		"selected":     selected,
-	}).Parse(formTmpl + resultTmpl + launcherTmpl + dialogTmpl))}
+	}).Parse(formTmpl + pullRequestFieldTmpl + userOptionsTmpl + resultTmpl + launcherTmpl + dialogTmpl))}
 }
 
 // RenderForm writes the full embeddable create issue form to w.
@@ -200,6 +271,38 @@ func (c *Component) Form(data FormData) (template.HTML, error) {
 func (c *Component) RenderResult(w io.Writer, data FormData) error {
 	data.applyDefaults()
 	return c.tmpl.ExecuteTemplate(w, "jira-create-result", data)
+}
+
+// RenderPullRequestField writes only the dependent PR/MR select field.
+func (c *Component) RenderPullRequestField(w io.Writer, data FormData) error {
+	data.applyDefaults()
+	return c.tmpl.ExecuteTemplate(w, "jira-create-pull-request-field-wrapper", data)
+}
+
+// PullRequestFieldHTML returns only the dependent PR/MR select field.
+func (c *Component) PullRequestFieldHTML(data FormData) (template.HTML, error) {
+	var buf bytes.Buffer
+	if err := c.RenderPullRequestField(&buf, data); err != nil {
+		return "", err
+	}
+	return template.HTML(buf.String()), nil
+}
+
+// RenderUserOptions writes only a datalist of Jira user search results.
+func (c *Component) RenderUserOptions(w io.Writer, data UserOptionsData) error {
+	if data.OptionsID == "" {
+		data.OptionsID = DefaultAssigneeOptionsID
+	}
+	return c.tmpl.ExecuteTemplate(w, "jira-create-user-options-list", data)
+}
+
+// UserOptionsHTML returns only a datalist of Jira user search results.
+func (c *Component) UserOptionsHTML(data UserOptionsData) (template.HTML, error) {
+	var buf bytes.Buffer
+	if err := c.RenderUserOptions(&buf, data); err != nil {
+		return "", err
+	}
+	return template.HTML(buf.String()), nil
 }
 
 // ResultHTML returns only the result target as template.HTML.
@@ -256,8 +359,11 @@ func ParseValues(values url.Values) (IssueForm, error) {
 		Summary:           strings.TrimSpace(values.Get("summary")),
 		IssueType:         strings.TrimSpace(values.Get("issue_type")),
 		Description:       strings.TrimSpace(values.Get("description")),
+		PullRequestRepo:   strings.TrimSpace(values.Get("pull_request_repo")),
+		PullRequest:       strings.TrimSpace(values.Get("pull_request")),
 		Priority:          strings.TrimSpace(values.Get("priority")),
 		Labels:            splitCSV(values.Get("labels")),
+		SubtaskNames:      splitList(values.Get("subtask_names")),
 		AssigneeAccountID: strings.TrimSpace(values.Get("assignee_account_id")),
 		ReporterAccountID: strings.TrimSpace(values.Get("reporter_account_id")),
 	}
@@ -289,6 +395,17 @@ func JS() template.JS {
 
 func splitCSV(raw string) []string {
 	parts := strings.Split(raw, ",")
+	return cleanList(parts)
+}
+
+func splitList(raw string) []string {
+	parts := strings.FieldsFunc(raw, func(r rune) bool {
+		return r == ',' || r == '\n' || r == '\r' || r == ';'
+	})
+	return cleanList(parts)
+}
+
+func cleanList(parts []string) []string {
 	values := make([]string, 0, len(parts))
 	for _, part := range parts {
 		value := strings.TrimSpace(part)
@@ -307,8 +424,11 @@ const formTmpl = `{{define "jira-create-form"}}
 <div class="hx-jira-create">
   {{template "jira-create-result" .}}
   {{if .ProjectsErr}}<div class="hx-jira-create-warn">Could not load Jira projects: {{.ProjectsErr}}</div>{{end}}
+	{{if .IssueTypesErr}}<div class="hx-jira-create-warn">Could not load Jira issue types: {{.IssueTypesErr}}</div>{{end}}
   {{if .AssigneesErr}}<div class="hx-jira-create-warn">Could not load Jira assignees: {{.AssigneesErr}}</div>{{end}}
-  <form class="hx-jira-create-form" action="{{.Endpoint}}" method="post" hx-post="{{.Endpoint}}" hx-target="#{{.ResultID}}" hx-swap="outerHTML" hx-indicator="#{{.WorkingID}}" hx-disabled-elt="find input, find textarea, find select, find button">
+	{{if .PullRequestReposErr}}<div class="hx-jira-create-warn">Could not load GitHub repositories: {{.PullRequestReposErr}}</div>{{end}}
+	{{if .PullRequestsErr}}<div class="hx-jira-create-warn">Could not load pull requests: {{.PullRequestsErr}}</div>{{end}}
+	<form class="hx-jira-create-form" action="{{.Endpoint}}" method="post" hx-post="{{.Endpoint}}" hx-target="#{{.ResultID}}" hx-swap="outerHTML" hx-indicator="#{{.WorkingID}}">
     <div class="hx-jira-create-grid">
       <label class="hx-jira-create-field">Project
         {{if .Projects}}
@@ -320,13 +440,22 @@ const formTmpl = `{{define "jira-create-form"}}
         {{end}}
       </label>
       <label class="hx-jira-create-field">Issue type
-        <select name="issue_type">
+				<select name="issue_type"{{if not .IssueTypes}} disabled{{end}}>
           {{range .IssueTypes}}<option value="{{.}}"{{if selected $.Values.IssueType .}} selected{{end}}>{{.}}</option>{{end}}
         </select>
       </label>
     </div>
-    <label class="hx-jira-create-field">Summary<input name="summary" type="text" value="{{.Values.Summary}}" autocomplete="off" required></label>
-    <label class="hx-jira-create-field">Description<textarea name="description">{{.Values.Description}}</textarea></label>
+		<label class="hx-jira-create-field">Summary<input name="summary" type="text" value="{{.Values.Summary}}" autocomplete="off" required></label>
+		<label class="hx-jira-create-field">Description<textarea name="description">{{.Values.Description}}</textarea></label>
+		<div class="hx-jira-create-grid">
+			<label class="hx-jira-create-field">Repository
+				<select name="pull_request_repo" hx-get="{{.PullRequestsEndpoint}}" hx-trigger="change" hx-target="#{{.PullRequestsID}}" hx-swap="outerHTML" hx-include="this"{{if not .PullRequestRepos}} disabled{{end}}>
+					<option value="">None</option>
+					{{range .PullRequestRepos}}<option value="{{.FullName}}"{{if selected $.Values.PullRequestRepo .FullName}} selected{{end}}>{{.DisplayLabel}}</option>{{end}}
+				</select>
+			</label>
+			{{template "jira-create-pull-request-field-wrapper" .}}
+		</div>
     <div class="hx-jira-create-grid">
       <label class="hx-jira-create-field">Priority
         <select name="priority">
@@ -336,18 +465,17 @@ const formTmpl = `{{define "jira-create-form"}}
       </label>
       <label class="hx-jira-create-field">Labels<input name="labels" type="text" value="{{.Values.LabelsCSV}}" autocomplete="off"></label>
     </div>
+		<label class="hx-jira-create-field">Subtask names<textarea name="subtask_names">{{.Values.SubtaskNamesText}}</textarea></label>
     <div class="hx-jira-create-grid">
       <label class="hx-jira-create-field">Assignee
-        <select name="assignee_account_id">
-          <option value="">Unassigned</option>
-          {{range .Assignees}}<option value="{{.AccountID}}"{{if selected $.Values.AssigneeAccountID .AccountID}} selected{{end}}>{{.DisplayName}}</option>{{end}}
-        </select>
+				<input name="assignee_search" type="search" list="{{.AssigneeOptionsID}}" autocomplete="off" placeholder="Search users" hx-get="{{.UsersEndpoint}}" hx-trigger="input changed delay:250ms, focus once" hx-target="#{{.AssigneeOptionsID}}" hx-swap="outerHTML" hx-include="[name='project_key'], this" hx-vals='{"field":"assignee"}' data-jira-user-input data-jira-user-target="assignee_account_id">
+				<input name="assignee_account_id" type="hidden" value="{{.Values.AssigneeAccountID}}">
+				{{template "jira-create-assignee-options" .}}
       </label>
       <label class="hx-jira-create-field">Reporter
-        <select name="reporter_account_id">
-          <option value="">Default</option>
-          {{range .Assignees}}<option value="{{.AccountID}}"{{if selected $.Values.ReporterAccountID .AccountID}} selected{{end}}>{{.DisplayName}}</option>{{end}}
-        </select>
+				<input name="reporter_search" type="search" list="{{.ReporterOptionsID}}" autocomplete="off" placeholder="Search users" hx-get="{{.UsersEndpoint}}" hx-trigger="input changed delay:250ms, focus once" hx-target="#{{.ReporterOptionsID}}" hx-swap="outerHTML" hx-include="[name='project_key'], this" hx-vals='{"field":"reporter"}' data-jira-user-input data-jira-user-target="reporter_account_id">
+				<input name="reporter_account_id" type="hidden" value="{{.Values.ReporterAccountID}}">
+				{{template "jira-create-reporter-options" .}}
       </label>
     </div>
     <div class="hx-jira-create-working htmx-indicator" id="{{.WorkingID}}" role="status" aria-live="polite">Creating issue...</div>
@@ -356,10 +484,44 @@ const formTmpl = `{{define "jira-create-form"}}
 </div>
 {{end}}`
 
+const pullRequestFieldTmpl = `{{define "jira-create-pull-request-field-wrapper"}}
+<div id="{{.PullRequestsID}}">
+	{{template "jira-create-pull-request-field" .}}
+</div>
+{{end}}
+
+{{define "jira-create-pull-request-field"}}
+<label class="hx-jira-create-field">PR / MR
+	<select name="pull_request"{{if not .PullRequests}} disabled{{end}}>
+		<option value="">None</option>
+		{{range .PullRequests}}<option value="{{.Value}}"{{if selected $.Values.PullRequest .Value}} selected{{end}}>{{.Label}}</option>{{end}}
+	</select>
+</label>
+{{end}}`
+
+const userOptionsTmpl = `{{define "jira-create-assignee-options"}}
+<datalist id="{{.AssigneeOptionsID}}">
+	{{range .Assignees}}<option value="{{.DisplayName}}" data-account-id="{{.AccountID}}"></option>{{end}}
+</datalist>
+{{end}}
+
+{{define "jira-create-reporter-options"}}
+<datalist id="{{.ReporterOptionsID}}">
+	{{range .Assignees}}<option value="{{.DisplayName}}" data-account-id="{{.AccountID}}"></option>{{end}}
+</datalist>
+{{end}}
+
+{{define "jira-create-user-options-list"}}
+<datalist id="{{.OptionsID}}">
+	{{range .Users}}<option value="{{.DisplayName}}" data-account-id="{{.AccountID}}"></option>{{end}}
+</datalist>
+{{end}}`
+
 const resultTmpl = `{{define "jira-create-result"}}
 <div class="hx-jira-create-result" id="{{.ResultID}}" aria-live="polite">
   {{if .Result.Err}}<div class="hx-jira-create-warn">{{.Result.Err}}</div>{{end}}
   {{if .Result.Key}}<div class="hx-jira-create-notice">Created <a href="{{.Result.URL}}" target="_blank" rel="noreferrer">{{.Result.Key}}</a></div>{{end}}
+	{{if .Result.Subtasks}}<div class="hx-jira-create-notice">Subtasks: {{range $i, $it := .Result.Subtasks}}{{if $i}}, {{end}}<a href="{{$it.URL}}" target="_blank" rel="noreferrer">{{$it.Key}}</a>{{end}}</div>{{end}}
 </div>
 {{end}}`
 
@@ -431,7 +593,44 @@ const componentJS = `
 		});
 	}
 
+	function selectedAccountID(input){
+		var listID = input.getAttribute('list');
+		var list = listID ? document.getElementById(listID) : null;
+		if(!list || !input.value){ return ""; }
+		var options = list.querySelectorAll('option');
+		for(var i = 0; i < options.length; i++){
+			if(options[i].value === input.value){
+				return options[i].getAttribute('data-account-id') || "";
+			}
+		}
+		return "";
+	}
+
+	function syncUserPicker(input){
+		var target = input.getAttribute('data-jira-user-target');
+		var form = input.form;
+		var hidden = form && target ? form.elements[target] : null;
+		if(!hidden){ return; }
+		hidden.value = selectedAccountID(input);
+	}
+
+	function initUserPickers(scope){
+		var inputs = (scope || document).querySelectorAll('[data-jira-user-input]');
+		for(var i = 0; i < inputs.length; i++){
+			if(inputs[i].dataset.jiraUserReady){ continue; }
+			inputs[i].dataset.jiraUserReady = "1";
+			inputs[i].addEventListener('input', function(event){ syncUserPicker(event.currentTarget); });
+			inputs[i].addEventListener('change', function(event){ syncUserPicker(event.currentTarget); });
+		}
+	}
+
+	function syncUserPickers(scope){
+		var inputs = (scope || document).querySelectorAll('[data-jira-user-input]');
+		for(var i = 0; i < inputs.length; i++){ syncUserPicker(inputs[i]); }
+	}
+
 	function initAll(scope){
+		initUserPickers(scope || document);
 		var roots = (scope || document).querySelectorAll('[data-jira-create-launcher]');
 		for(var i = 0; i < roots.length; i++){ initLauncher(roots[i]); }
 	}
@@ -461,6 +660,7 @@ const componentJS = `
 
 	document.addEventListener('htmx:afterSwap', function(event){
 		initAll(document);
+		syncUserPickers(document);
 		closeCreatedDialog(event.target, event.detail);
 	});
 })();

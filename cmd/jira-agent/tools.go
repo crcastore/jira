@@ -10,7 +10,7 @@ import (
 )
 
 // ToolSchemas describes every tool exposed to the LLM.
-// Trimmed to a focused GitHub repository and issue workflow. The removed tool schemas
+// Trimmed to a focused GitHub issue and pull request workflow. The removed tool schemas
 // (all Jira tools + extra GitHub tools) are archived in REMOVED_TOOLS.md and can
 // be pasted back here to restore them. CallTool still dispatches them if called.
 var ToolSchemas = []openai.Tool{
@@ -131,6 +131,20 @@ var ToolSchemas = []openai.Tool{
 		},
 	}},
 	{Type: openai.ToolTypeFunction, Function: &openai.FunctionDefinition{
+		Name:        "gh_list_pr_files",
+		Description: "List files changed in a pull request / merge request (MR).",
+		Parameters: jsonschema.Definition{
+			Type: jsonschema.Object,
+			Properties: map[string]jsonschema.Definition{
+				"owner":    {Type: jsonschema.String},
+				"repo":     {Type: jsonschema.String},
+				"number":   {Type: jsonschema.Integer, Description: "pull request / MR number"},
+				"per_page": {Type: jsonschema.Integer},
+			},
+			Required: []string{"owner", "repo", "number"},
+		},
+	}},
+	{Type: openai.ToolTypeFunction, Function: &openai.FunctionDefinition{
 		Name:        "gh_create_issue",
 		Description: "Create a GitHub issue.",
 		Parameters: jsonschema.Definition{
@@ -179,43 +193,28 @@ const toolResultMaxBytes = 60000
 
 // toolAliases maps common model-hallucinated tool names to the canonical name.
 var toolAliases = map[string]string{
-	"gh_list_repos":          "gh_list_my_repos",
-	"gh_repos":               "gh_list_my_repos",
-	"list_repos":             "gh_list_my_repos",
-	"list_my_repos":          "gh_list_my_repos",
-	"gh_my_repos":            "gh_list_my_repos",
-	"gh_list_prs":            "gh_list_pulls",
-	"gh_list_pull_requests":  "gh_list_pulls",
-	"gh_list_merge_requests": "gh_list_pulls",
-	"gh_list_mrs":            "gh_list_pulls",
-	"gh_find_prs":            "gh_find_pull_requests",
-	"gh_find_pulls":          "gh_find_pull_requests",
-	"gh_find_mrs":            "gh_find_pull_requests",
-	"gh_find_merge_requests": "gh_find_pull_requests",
-	"gh_search_prs":          "gh_find_pull_requests",
-	"gh_search_mrs":          "gh_find_pull_requests",
-	"gh_list_all_prs":        "gh_find_pull_requests",
-	"gh_list_all_mrs":        "gh_find_pull_requests",
-	"find_prs":               "gh_find_pull_requests",
-	"find_mrs":               "gh_find_pull_requests",
-	"find_merge_requests":    "gh_find_pull_requests",
-	"list_all_prs":           "gh_find_pull_requests",
-	"list_all_mrs":           "gh_find_pull_requests",
-	"list_pulls":             "gh_list_pulls",
-	"list_pull_requests":     "gh_list_pulls",
-	"list_merge_requests":    "gh_list_pulls",
-	"list_mrs":               "gh_list_pulls",
-	"gh_get_pr":              "gh_get_pull",
-	"gh_get_pull_request":    "gh_get_pull",
-	"gh_get_merge_request":   "gh_get_pull",
-	"gh_get_mr":              "gh_get_pull",
-	"get_pr":                 "gh_get_pull",
-	"get_pull_request":       "gh_get_pull",
-	"get_merge_request":      "gh_get_pull",
-	"get_mr":                 "gh_get_pull",
-	"search_jira":            "search_issues",
-	"jira_search":            "search_issues",
-	"get_jira_issue":         "get_issue",
+	"gh_list_repos":               "gh_list_my_repos",
+	"gh_repos":                    "gh_list_my_repos",
+	"list_repos":                  "gh_list_my_repos",
+	"list_my_repos":               "gh_list_my_repos",
+	"gh_my_repos":                 "gh_list_my_repos",
+	"gh_list_mr_files":            "gh_list_pr_files",
+	"gh_list_merge_request_files": "gh_list_pr_files",
+	"gh_get_mr_files":             "gh_list_pr_files",
+	"gh_get_merge_request_files":  "gh_list_pr_files",
+	"gh_changed_files":            "gh_list_pr_files",
+	"gh_pr_changed_files":         "gh_list_pr_files",
+	"gh_mr_changed_files":         "gh_list_pr_files",
+	"list_mr_files":               "gh_list_pr_files",
+	"list_merge_request_files":    "gh_list_pr_files",
+	"get_mr_files":                "gh_list_pr_files",
+	"get_merge_request_files":     "gh_list_pr_files",
+	"changed_files":               "gh_list_pr_files",
+	"pr_changed_files":            "gh_list_pr_files",
+	"mr_changed_files":            "gh_list_pr_files",
+	"search_jira":                 "search_issues",
+	"jira_search":                 "search_issues",
+	"get_jira_issue":              "get_issue",
 }
 
 // canonicalToolName resolves an alias to its canonical tool name, returning the
@@ -628,10 +627,7 @@ func trimGitHub(name string, raw json.RawMessage) json.RawMessage {
 		if err := json.Unmarshal(raw, &payload); err != nil {
 			return raw
 		}
-		slim := make([]map[string]any, 0, len(payload.WorkflowRuns))
-		for _, r := range payload.WorkflowRuns {
-			slim = append(slim, slimWorkflowRun(r))
-		}
+		slim := slimMaps(payload.WorkflowRuns, slimWorkflowRun)
 		b, _ := json.Marshal(map[string]any{
 			"total_count": payload.TotalCount, "returned": len(slim), "runs": slim})
 		return b
@@ -807,10 +803,12 @@ func labelNames(v any) []string {
 	}
 	out := make([]string, 0, len(arr))
 	for _, l := range arr {
-		if m, ok := l.(map[string]any); ok {
-			if name, ok := m["name"].(string); ok {
-				out = append(out, name)
-			}
+		m, ok := l.(map[string]any)
+		if !ok {
+			continue
+		}
+		if name, ok := m["name"].(string); ok {
+			out = append(out, name)
 		}
 	}
 	return out
@@ -843,10 +841,7 @@ func slimArray(raw json.RawMessage, fn func(map[string]any) map[string]any) json
 	if err := json.Unmarshal(raw, &arr); err != nil {
 		return raw
 	}
-	slim := make([]map[string]any, 0, len(arr))
-	for _, m := range arr {
-		slim = append(slim, fn(m))
-	}
+	slim := slimMaps(arr, fn)
 	b, _ := json.Marshal(map[string]any{"count": len(slim), "items": slim})
 	return b
 }
@@ -860,10 +855,7 @@ func slimSearchItems(raw json.RawMessage, fn func(map[string]any) map[string]any
 	if err := json.Unmarshal(raw, &payload); err != nil {
 		return raw
 	}
-	slim := make([]map[string]any, 0, len(payload.Items))
-	for _, m := range payload.Items {
-		slim = append(slim, fn(m))
-	}
+	slim := slimMaps(payload.Items, fn)
 	b, _ := json.Marshal(map[string]any{
 		"total_count":        payload.TotalCount,
 		"incomplete_results": payload.IncompleteResults,
@@ -871,6 +863,14 @@ func slimSearchItems(raw json.RawMessage, fn func(map[string]any) map[string]any
 		"items":              slim,
 	})
 	return b
+}
+
+func slimMaps(items []map[string]any, fn func(map[string]any) map[string]any) []map[string]any {
+	slim := make([]map[string]any, 0, len(items))
+	for _, item := range items {
+		slim = append(slim, fn(item))
+	}
+	return slim
 }
 
 func pickFields(raw json.RawMessage, keys ...string) json.RawMessage {

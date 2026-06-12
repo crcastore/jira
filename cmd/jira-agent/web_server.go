@@ -66,6 +66,8 @@ func serveWeb() {
 	mux := http.NewServeMux()
 	mux.HandleFunc("/", app.handleIndex)
 	mux.HandleFunc("/jira/create", app.handleJiraCreatePage)
+	mux.HandleFunc("/jira/create/users", app.handleJiraCreateUsers)
+	mux.HandleFunc("/jira/create/pull-requests", app.handleJiraCreatePullRequests)
 	mux.Handle("/chat", app.chatHandler())
 	mux.Handle("/api/token-limit", app.tokenLimitHandler())
 	mux.Handle("/api/reset", app.resetHandler())
@@ -114,8 +116,8 @@ func (a *webApp) handleIndex(w http.ResponseWriter, r *http.Request) {
 		"Model":            a.chat.DefaultModel(),
 		"GitHubReady":      a.gc != nil,
 		"ChatStyles":       chatui.StyleTag(),
-		"JiraCreateStyles": jiraCreateStyleTag(),
-		"JiraCreateScript": jiraCreateScriptTag(),
+		"JiraCreateStyles": jiraissueui.StyleTag(),
+		"JiraCreateScript": jiraissueui.ScriptTag(),
 		"JiraCreateDialog": a.jiraCreateDialog(),
 		"ChatWidget":       widget,
 		"MaxContextTokens": a.currentMaxContextTokens(),

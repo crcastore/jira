@@ -406,19 +406,6 @@ func TestEnvOrInt(t *testing.T) {
 	}
 }
 
-func TestContainsString(t *testing.T) {
-	vals := []string{"a", "b", "c"}
-	if !containsString(vals, "b") {
-		t.Errorf("expected to find b")
-	}
-	if containsString(vals, "z") {
-		t.Errorf("did not expect to find z")
-	}
-	if containsString(nil, "a") {
-		t.Errorf("nil slice should not contain anything")
-	}
-}
-
 func TestEnvOr(t *testing.T) {
 	const key = "TEST_ENV_OR_ABC"
 	t.Setenv(key, "")

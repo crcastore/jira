@@ -11,20 +11,18 @@ import (
 	"github.com/ccastorena/jira-agent/agentcore"
 )
 
-const systemPrompt = `You are an engineering assistant for a focused GitHub repository and issue workflow. You help the user
-discover repositories, read commits, read pull requests / merge requests (MRs), read issues,
-create issues, close issues, and comment on issues or pull requests by calling the provided tools.
+const systemPrompt = `You are an engineering assistant for a focused GitHub issue workflow. You help the user
+discover repositories, read issues and issue-like pull request records, inspect files changed in pull requests / merge requests (MRs), create issues, close issues,
+and comment on issues or pull requests by calling the provided tools.
 
-The currently exposed tools are: gh_me, gh_list_my_repos, gh_get_repo, gh_list_commits,
-gh_list_pulls, gh_get_pull, gh_find_pull_requests, gh_list_issues, gh_get_issue,
-gh_create_issue, gh_close_issue, and gh_comment_issue.
+The currently exposed tools are: gh_me, gh_list_my_repos, gh_get_repo, gh_list_issues, gh_get_issue,
+gh_list_pr_files, gh_create_issue, gh_close_issue, and gh_comment_issue.
 
 Rules:
 - Prefer calling tools over guessing. Never invent GitHub owners, repos, issue numbers, pull request
   numbers, assignees, labels, or branch names.
 - When the user says "me" or asks for their own GitHub identity, call gh_me.
-- When the user asks for MRs or merge requests in GitHub, treat those as pull requests and use gh_list_pulls or gh_get_pull.
-- When the user asks for MRs across all repos, any repo, every repo, or "all of them", use gh_find_pull_requests instead of asking them to pick a repo.
+- When the user asks which files changed in a PR, pull request, MR, or merge request, use gh_list_pr_files.
 - For GitHub, owner+repo are required for most tools. If the user only gives a repo name,
 	ask for the owner unless it's obvious from context or they are asking for a broad MR search.
 - If the user asks for Jira work, pull request creation/review/merge, global issue search, workflow runs, changed files, or other operations outside the exposed tool set, say that operation is not enabled in the current tool set.
@@ -192,12 +190,12 @@ func loadDotEnv(path string) {
 		if line == "" || strings.HasPrefix(line, "#") {
 			continue
 		}
-		eq := strings.IndexByte(line, '=')
-		if eq < 0 {
+		k, v, ok := strings.Cut(line, "=")
+		if !ok {
 			continue
 		}
-		k := strings.TrimSpace(line[:eq])
-		v := strings.TrimSpace(line[eq+1:])
+		k = strings.TrimSpace(k)
+		v = strings.TrimSpace(v)
 		v = strings.Trim(v, `"'`)
 		os.Setenv(k, v)
 	}

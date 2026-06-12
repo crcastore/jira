@@ -119,10 +119,16 @@ func (c *JiraClient) GetIssue(key string) (json.RawMessage, error) {
 	return c.request("GET", "/rest/api/3/issue/"+key, nil, nil)
 }
 
+func (c *JiraClient) ListIssueTypes(projectKey string) (json.RawMessage, error) {
+	return c.request("GET", "/rest/api/3/issue/createmeta/"+url.PathEscape(projectKey)+"/issuetypes", nil, nil)
+}
+
 type CreateIssueArgs struct {
 	ProjectKey        string   `json:"project_key"`
 	Summary           string   `json:"summary"`
 	IssueType         string   `json:"issue_type,omitempty"`
+	ParentID          string   `json:"parent_id,omitempty"`
+	ParentKey         string   `json:"parent_key,omitempty"`
 	Description       string   `json:"description,omitempty"`
 	AssigneeAccountID string   `json:"assignee_account_id,omitempty"`
 	ReporterAccountID string   `json:"reporter_account_id,omitempty"`
@@ -138,6 +144,11 @@ func (c *JiraClient) CreateIssue(a CreateIssueArgs) (json.RawMessage, error) {
 		"project":   map[string]string{"key": a.ProjectKey},
 		"summary":   a.Summary,
 		"issuetype": map[string]string{"name": a.IssueType},
+	}
+	if a.ParentID != "" {
+		fields["parent"] = map[string]string{"id": a.ParentID}
+	} else if a.ParentKey != "" {
+		fields["parent"] = map[string]string{"key": a.ParentKey}
 	}
 	if a.Description != "" {
 		fields["description"] = adf(a.Description)
@@ -190,12 +201,15 @@ func (c *JiraClient) SearchUsers(query string, maxResults int) (json.RawMessage,
 	return c.request("GET", "/rest/api/3/user/search", q, nil)
 }
 
-func (c *JiraClient) SearchAssignableUsers(projectKey string, maxResults int) (json.RawMessage, error) {
+func (c *JiraClient) SearchAssignableUsers(projectKey, query string, maxResults int) (json.RawMessage, error) {
 	if maxResults <= 0 {
-		maxResults = 50
+		maxResults = 20
 	}
 	q := url.Values{}
 	q.Set("project", projectKey)
+	if query != "" {
+		q.Set("query", query)
+	}
 	q.Set("maxResults", fmt.Sprintf("%d", maxResults))
 	return c.request("GET", "/rest/api/3/user/assignable/search", q, nil)
 }
