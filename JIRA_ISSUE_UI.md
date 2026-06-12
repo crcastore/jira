@@ -385,6 +385,7 @@ When creating an issue, convert `jiraissueui.IssueForm` into the target Jira cli
 | `Description` | `description` | Plain text from the textarea. |
 | `Priority` | `priority` | Empty string means no priority. |
 | `Labels` | `labels` | Comma-separated input parsed into `[]string`. |
+| `SubtaskNames` | `subtask_names` | Comma/newline/semicolon-separated names. The source app creates one child `Sub-task` per name. |
 | `AssigneeAccountID` | `assignee_account_id` | Empty string means unassigned/default behavior. |
 | `ReporterAccountID` | `reporter_account_id` | Empty string means Jira default behavior. |
 

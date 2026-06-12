@@ -119,10 +119,16 @@ func (c *JiraClient) GetIssue(key string) (json.RawMessage, error) {
 	return c.request("GET", "/rest/api/3/issue/"+key, nil, nil)
 }
 
+func (c *JiraClient) ListIssueTypes(projectKey string) (json.RawMessage, error) {
+	return c.request("GET", "/rest/api/3/issue/createmeta/"+url.PathEscape(projectKey)+"/issuetypes", nil, nil)
+}
+
 type CreateIssueArgs struct {
 	ProjectKey        string   `json:"project_key"`
 	Summary           string   `json:"summary"`
 	IssueType         string   `json:"issue_type,omitempty"`
+	ParentID          string   `json:"parent_id,omitempty"`
+	ParentKey         string   `json:"parent_key,omitempty"`
 	Description       string   `json:"description,omitempty"`
 	AssigneeAccountID string   `json:"assignee_account_id,omitempty"`
 	ReporterAccountID string   `json:"reporter_account_id,omitempty"`
@@ -138,6 +144,11 @@ func (c *JiraClient) CreateIssue(a CreateIssueArgs) (json.RawMessage, error) {
 		"project":   map[string]string{"key": a.ProjectKey},
 		"summary":   a.Summary,
 		"issuetype": map[string]string{"name": a.IssueType},
+	}
+	if a.ParentID != "" {
+		fields["parent"] = map[string]string{"id": a.ParentID}
+	} else if a.ParentKey != "" {
+		fields["parent"] = map[string]string{"key": a.ParentKey}
 	}
 	if a.Description != "" {
 		fields["description"] = adf(a.Description)

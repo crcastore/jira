@@ -98,7 +98,7 @@ workflow schemas are archived in [REMOVED_TOOLS.md](REMOVED_TOOLS.md).
 - `show open issues in owner/repo`
 - `show issue #17 in owner/repo`
 - `show files changed in MR #12 in owner/repo`
-- In the Jira create form, choose a GitHub repository, then choose an available `PR / MR` to include the PR and changed files in the Jira description.
+- In the Jira create form, choose a GitHub repository, then choose an available `PR / MR` to include the PR and changed files in the Jira description. Add names in `Subtask names` to create one child `Sub-task` per name.
 - `create an issue in owner/repo titled "Fix flaky login test" with label bug`
 - `comment on issue #17 in owner/repo saying "looking into this today"`
 - `close issue #17 in owner/repo`

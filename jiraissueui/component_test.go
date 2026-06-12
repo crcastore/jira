@@ -17,6 +17,7 @@ func TestParseValuesNormalizesAndValidatesForm(t *testing.T) {
 		"pull_request":        {" octo/hello#12 "},
 		"priority":            {" High "},
 		"labels":              {" auth, frontend, , urgent "},
+		"subtask_names":       {" Ada\nBob, Grace;  "},
 		"assignee_account_id": {" 712020:assignee "},
 		"reporter_account_id": {" 712020:reporter "},
 	})
@@ -39,6 +40,15 @@ func TestParseValuesNormalizesAndValidatesForm(t *testing.T) {
 	for i, want := range wantLabels {
 		if form.Labels[i] != want {
 			t.Fatalf("labels[%d] = %q, want %q", i, form.Labels[i], want)
+		}
+	}
+	wantSubtasks := []string{"Ada", "Bob", "Grace"}
+	if len(form.SubtaskNames) != len(wantSubtasks) {
+		t.Fatalf("subtask names = %#v", form.SubtaskNames)
+	}
+	for i, want := range wantSubtasks {
+		if form.SubtaskNames[i] != want {
+			t.Fatalf("subtaskNames[%d] = %q, want %q", i, form.SubtaskNames[i], want)
 		}
 	}
 }
@@ -236,6 +246,7 @@ func TestFormRendersSearchPickersAndSelectedValues(t *testing.T) {
 			PullRequest:       "octo/hello#12",
 			Priority:          "High",
 			Labels:            []string{"deploy", "urgent"},
+			SubtaskNames:      []string{"Ada", "Bob"},
 			AssigneeAccountID: "a1",
 			ReporterAccountID: "b2",
 		},
@@ -257,6 +268,8 @@ func TestFormRendersSearchPickersAndSelectedValues(t *testing.T) {
 		`<option value="octo/hello#12" selected>#12 Add login fix</option>`,
 		`<option value="High" selected>High</option>`,
 		`value="deploy, urgent"`,
+		`<textarea name="subtask_names">Ada
+Bob</textarea>`,
 		`name="assignee_search" type="search" list="jira-create-assignee-options"`,
 		`hx-get="/jira/create/users"`,
 		`data-jira-user-target="assignee_account_id"`,
@@ -322,12 +335,19 @@ func TestFormEscapesUserInput(t *testing.T) {
 }
 
 func TestResultRendering(t *testing.T) {
-	html, err := New().ResultHTML(FormData{Result: Result{Key: "SCRUM-12", URL: "https://example.atlassian.net/browse/SCRUM-12"}})
+	html, err := New().ResultHTML(FormData{Result: Result{
+		Key: "SCRUM-12",
+		URL: "https://example.atlassian.net/browse/SCRUM-12",
+		Subtasks: []IssueLink{{
+			Key: "SCRUM-13",
+			URL: "https://example.atlassian.net/browse/SCRUM-13",
+		}},
+	}})
 	if err != nil {
 		t.Fatalf("ResultHTML returned error: %v", err)
 	}
 	got := string(html)
-	if !strings.Contains(got, `Created <a href="https://example.atlassian.net/browse/SCRUM-12"`) || !strings.Contains(got, `SCRUM-12`) {
+	if !strings.Contains(got, `Created <a href="https://example.atlassian.net/browse/SCRUM-12"`) || !strings.Contains(got, `SCRUM-12`) || !strings.Contains(got, `SCRUM-13`) {
 		t.Fatalf("unexpected success result:\n%s", got)
 	}
 

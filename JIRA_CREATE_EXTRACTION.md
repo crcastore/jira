@@ -20,7 +20,7 @@ packages to this repo's Jira and GitHub clients.
 ## Current Runtime Flow
 
 1. The dashboard or dedicated create page asks [cmd/jira-agent/web_create.go](cmd/jira-agent/web_create.go) for form data.
-2. `jiraCreateFormData` loads Jira projects and assignable users from this app's Jira client.
+2. `jiraCreateFormData` loads Jira projects, project-valid issue types, and assignable users from this app's Jira client.
 3. `jiraCreateFormData` creates a `githubpr.Picker` from this app's GitHub client.
 4. `Picker.Repositories()` provides the repository dropdown values.
 5. If a repository is already selected, `Picker.PullRequests(repo)` provides the PR/MR dropdown values.
@@ -29,7 +29,8 @@ packages to this repo's Jira and GitHub clients.
 8. `handleJiraCreatePullRequests` calls `Picker.PullRequests(repo)` and returns only the PR/MR select fragment.
 9. When the user submits the form, `jiraissueui.ParseRequest` returns an `IssueForm`.
 10. `Picker.EnrichIssue(form)` parses `form.PullRequest`, fetches the PR/MR, fetches changed files, and appends a text block to `form.Description`.
-11. This app converts the enriched `IssueForm` into Jira REST create fields and calls Jira.
+11. This app converts the enriched `IssueForm` into Jira REST create fields and calls Jira to create the parent issue.
+12. If `subtask_names` was submitted, the app uses Jira's actual subtask issue type for the project and creates one child issue per name, copying the same description, priority, labels, assignee, and reporter. Each subtask summary is `Parent summary - Name`.
 
 ## Important Contracts
 
@@ -45,6 +46,7 @@ The UI uses these submitted field names:
 | PR/MR reference | `pull_request` | `jiraissueui`, options from `githubpr.PullRequests(repo)` |
 | Priority | `priority` | `jiraissueui` |
 | Labels | `labels` | `jiraissueui` |
+| Subtask names | `subtask_names` | `jiraissueui`, comma/newline/semicolon-separated names used to create child sub-tasks |
 | Assignee | `assignee_account_id` | `jiraissueui` |
 | Reporter | `reporter_account_id` | `jiraissueui` |
 

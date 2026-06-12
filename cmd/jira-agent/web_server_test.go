@@ -14,6 +14,8 @@ import (
 	"github.com/ccastorena/jira-agent/chat"
 )
 
+const testIssueTypesJSON = `{"values":[{"name":"Epic","subtask":false,"hierarchyLevel":1},{"name":"Request","subtask":false,"hierarchyLevel":0},{"name":"Task","subtask":false,"hierarchyLevel":0},{"name":"Subtask","subtask":true,"hierarchyLevel":-1}]}`
+
 type fakeChatService struct {
 	defaultModel string
 	models       []string
@@ -45,6 +47,39 @@ func (f fakeChatService) CurrentTokenUsage(string) int { return 0 }
 
 func (f fakeChatService) ResetSession(string) {}
 
+func TestParseJiraIssueTypesAcceptsResponseShapes(t *testing.T) {
+	cases := []json.RawMessage{
+		json.RawMessage(`{"values":[{"name":"Task","subtask":false},{"name":"Subtask","subtask":true}]}`),
+		json.RawMessage(`{"issueTypes":[{"name":"Task","subtask":false},{"name":"Subtask","subtask":true}]}`),
+		json.RawMessage(`{"projects":[{"issuetypes":[{"name":"Task","subtask":false},{"name":"Subtask","subtask":true}]}]}`),
+		json.RawMessage(`[{"name":"Task","subtask":false},{"name":"Subtask","subtask":true}]`),
+	}
+	for _, raw := range cases {
+		types, err := parseJiraIssueTypes(raw)
+		if err != nil {
+			t.Fatalf("parseJiraIssueTypes(%s) returned error: %v", raw, err)
+		}
+		if len(types) != 2 || types[0].Name != "Task" || types[1].Name != "Subtask" || !types[1].Subtask {
+			t.Fatalf("unexpected types from %s: %+v", raw, types)
+		}
+	}
+}
+
+func TestParentIssueTypeNamesExcludeEpicAndPreferTask(t *testing.T) {
+	types, err := parseJiraIssueTypes(json.RawMessage(testIssueTypesJSON))
+	if err != nil {
+		t.Fatalf("parseJiraIssueTypes returned error: %v", err)
+	}
+	sortJiraIssueTypes(types)
+	names := parentIssueTypeNames(types)
+	if strings.Join(names, ",") != "Task,Request" {
+		t.Fatalf("parent issue type names = %#v, want Task, Request", names)
+	}
+	if got := validParentIssueType("Epic", types); got != "Task" {
+		t.Fatalf("validParentIssueType(Epic) = %q, want Task", got)
+	}
+}
+
 func TestHandleIndexRendersPage(t *testing.T) {
 	app := &webApp{chat: fakeChatService{defaultModel: "llama", models: []string{"llama", "qwen"}}, llmTimeout: 5 * time.Second, maxContextTokens: 1234}
 	req := httptest.NewRequest(http.MethodGet, "/", nil)
@@ -73,6 +108,8 @@ func TestHandleIndexRendersCreateDialogWhenJiraAvailable(t *testing.T) {
 		switch r.URL.Path {
 		case "/rest/api/3/project/search":
 			_, _ = w.Write([]byte(`{"values":[{"key":"SCRUM","name":"My Team"}]}`))
+		case "/rest/api/3/issue/createmeta/SCRUM/issuetypes":
+			_, _ = w.Write([]byte(testIssueTypesJSON))
 		case "/rest/api/3/user/assignable/search":
 			_, _ = w.Write([]byte(`[{"accountId":"712020:abc","displayName":"Chris","active":true}]`))
 		default:
@@ -115,6 +152,8 @@ func TestHandleJiraCreatePageRendersProjectDropdown(t *testing.T) {
 		switch r.URL.Path {
 		case "/rest/api/3/project/search":
 			_, _ = w.Write([]byte(`{"values":[{"key":"SCRUM","name":"My Team"}]}`))
+		case "/rest/api/3/issue/createmeta/SCRUM/issuetypes":
+			_, _ = w.Write([]byte(testIssueTypesJSON))
 		case "/rest/api/3/user/assignable/search":
 			if r.URL.Query().Get("project") != "SCRUM" {
 				t.Errorf("assignable search project = %q, want SCRUM", r.URL.Query().Get("project"))
@@ -257,6 +296,9 @@ func TestHandleJiraCreatePostsStandardIssueFields(t *testing.T) {
 		case "/rest/api/3/project/search":
 			_, _ = w.Write([]byte(`{"values":[{"key":"SCRUM","name":"My Team"}]}`))
 			return
+		case "/rest/api/3/issue/createmeta/SCRUM/issuetypes":
+			_, _ = w.Write([]byte(testIssueTypesJSON))
+			return
 		case "/rest/api/3/user/assignable/search":
 			_, _ = w.Write([]byte(`[{"accountId":"712020:assignee","displayName":"Ada","active":true}]`))
 			return
@@ -280,7 +322,7 @@ func TestHandleJiraCreatePostsStandardIssueFields(t *testing.T) {
 		if payload.Fields["summary"] != "Fix login" {
 			t.Errorf("summary = %v", payload.Fields["summary"])
 		}
-		if nested(payload.Fields, "issuetype", "name") != "Bug" {
+		if nested(payload.Fields, "issuetype", "name") != "Task" {
 			t.Errorf("issue type = %v", payload.Fields["issuetype"])
 		}
 		if nested(payload.Fields, "priority", "name") != "High" {
@@ -324,6 +366,90 @@ func TestHandleJiraCreatePostsStandardIssueFields(t *testing.T) {
 	}
 }
 
+func TestHandleJiraCreateCreatesSubtasksForNames(t *testing.T) {
+	type createPayload struct {
+		Fields map[string]any `json:"fields"`
+	}
+	var creates []createPayload
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		if r.URL.Path == "/rest/api/3/issue/createmeta/SCRUM/issuetypes" {
+			_, _ = w.Write([]byte(`{"values":[{"name":"Task","subtask":false},{"name":"Subtask","subtask":true}]}`))
+			return
+		}
+		if r.URL.Path != "/rest/api/3/issue" {
+			t.Fatalf("unexpected path = %s", r.URL.Path)
+		}
+		var payload createPayload
+		if err := json.NewDecoder(r.Body).Decode(&payload); err != nil {
+			t.Fatalf("decode request: %v", err)
+		}
+		creates = append(creates, payload)
+		switch len(creates) {
+		case 1:
+			_, _ = w.Write([]byte(`{"id":"10012","key":"SCRUM-12"}`))
+		case 2:
+			_, _ = w.Write([]byte(`{"id":"10013","key":"SCRUM-13"}`))
+		case 3:
+			_, _ = w.Write([]byte(`{"id":"10014","key":"SCRUM-14"}`))
+		default:
+			t.Fatalf("unexpected create count %d", len(creates))
+		}
+	}))
+	defer server.Close()
+
+	app := &webApp{jc: &JiraClient{baseURL: server.URL, email: "me@example.com", token: "token", http: server.Client()}}
+	req := httptest.NewRequest(http.MethodPost, "/jira/create", strings.NewReader(url.Values{
+		"project_key":         {"scrum"},
+		"issue_type":          {"Bug"},
+		"summary":             {"Fix login"},
+		"description":         {"Button fails"},
+		"priority":            {"High"},
+		"labels":              {"auth, frontend"},
+		"subtask_names":       {"Ada\nBob"},
+		"assignee_account_id": {"712020:assignee"},
+		"reporter_account_id": {"712020:reporter"},
+	}.Encode()))
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	req.Header.Set("HX-Request", "true")
+	rr := httptest.NewRecorder()
+
+	app.handleJiraCreatePage(rr, req)
+
+	if rr.Code != http.StatusOK {
+		t.Fatalf("status: got %d want 200", rr.Code)
+	}
+	if len(creates) != 3 {
+		t.Fatalf("create count = %d, want 3", len(creates))
+	}
+	parent := creates[0].Fields
+	if _, ok := parent["parent"]; ok {
+		t.Fatalf("parent issue should not have a parent field: %#v", parent["parent"])
+	}
+	if parent["summary"] != "Fix login" || nested(parent, "issuetype", "name") != "Task" {
+		t.Fatalf("unexpected parent payload: %#v", parent)
+	}
+	for i, want := range []string{"Ada", "Bob"} {
+		subtask := creates[i+1].Fields
+		if nested(subtask, "parent", "id") != "10012" {
+			t.Fatalf("subtask parent = %#v, want id 10012", subtask["parent"])
+		}
+		if nested(subtask, "issuetype", "name") != "Subtask" {
+			t.Fatalf("subtask issue type = %#v", subtask["issuetype"])
+		}
+		if subtask["summary"] != "Fix login - "+want {
+			t.Fatalf("subtask summary = %v", subtask["summary"])
+		}
+		if nested(subtask, "assignee", "accountId") != "712020:assignee" || nested(subtask, "reporter", "accountId") != "712020:reporter" {
+			t.Fatalf("subtask users were not copied: %#v", subtask)
+		}
+	}
+	body := rr.Body.String()
+	if !strings.Contains(body, "SCRUM-12") || !strings.Contains(body, "SCRUM-13") || !strings.Contains(body, "SCRUM-14") {
+		t.Fatalf("expected parent and subtask keys in response, got: %s", body)
+	}
+}
+
 func TestHandleJiraCreateAddsPullRequestDetailsToDescription(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
@@ -361,6 +487,9 @@ func TestHandleJiraCreateAddsPullRequestDetailsToDescription(t *testing.T) {
 			return
 		case "/rest/api/3/project/search":
 			_, _ = w.Write([]byte(`{"values":[{"key":"SCRUM","name":"My Team"}]}`))
+			return
+		case "/rest/api/3/issue/createmeta/SCRUM/issuetypes":
+			_, _ = w.Write([]byte(testIssueTypesJSON))
 			return
 		case "/rest/api/3/user/assignable/search":
 			_, _ = w.Write([]byte(`[]`))
@@ -470,6 +599,11 @@ func TestHandleJiraCreatePullRequestsRendersOptions(t *testing.T) {
 
 func TestHandleJiraCreateHTMXPostReturnsResultOnly(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/rest/api/3/issue/createmeta/SCRUM/issuetypes" {
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = w.Write([]byte(testIssueTypesJSON))
+			return
+		}
 		if r.URL.Path != "/rest/api/3/issue" {
 			t.Fatalf("unexpected Jira path for HTMX create: %s", r.URL.Path)
 		}

@@ -82,6 +82,7 @@ type IssueForm struct {
 	PullRequest       string
 	Priority          string
 	Labels            []string
+	SubtaskNames      []string
 	AssigneeAccountID string
 	ReporterAccountID string
 }
@@ -91,11 +92,23 @@ func (f IssueForm) LabelsCSV() string {
 	return strings.Join(f.Labels, ", ")
 }
 
-// Result is rendered above the form after a create attempt.
-type Result struct {
+// SubtaskNamesText returns subtask names in the multiline format accepted by the form.
+func (f IssueForm) SubtaskNamesText() string {
+	return strings.Join(f.SubtaskNames, "\n")
+}
+
+// IssueLink is a compact created issue reference rendered in create results.
+type IssueLink struct {
 	Key string
 	URL string
-	Err string
+}
+
+// Result is rendered above the form after a create attempt.
+type Result struct {
+	Key      string
+	URL      string
+	Subtasks []IssueLink
+	Err      string
 }
 
 // FormData configures the rendered create issue form.
@@ -112,6 +125,7 @@ type FormData struct {
 
 	Projects            []Project
 	ProjectsErr         string
+	IssueTypesErr       string
 	Assignees           []User
 	AssigneesErr        string
 	PullRequestRepos    []PullRequestRepo
@@ -211,7 +225,7 @@ func (d *FormData) applyDefaults() {
 	if d.SubmitLabel == "" {
 		d.SubmitLabel = DefaultSubmitLabel
 	}
-	if len(d.IssueTypes) == 0 {
+	if len(d.IssueTypes) == 0 && d.IssueTypesErr == "" {
 		d.IssueTypes = append([]string(nil), DefaultIssueTypes...)
 	}
 	if len(d.Priorities) == 0 {
@@ -220,7 +234,7 @@ func (d *FormData) applyDefaults() {
 	if d.Values.ProjectKey == "" && len(d.Projects) > 0 {
 		d.Values.ProjectKey = d.Projects[0].Key
 	}
-	if d.Values.IssueType == "" {
+	if d.Values.IssueType == "" && len(d.IssueTypes) > 0 {
 		d.Values.IssueType = d.IssueTypes[0]
 	}
 }
@@ -349,6 +363,7 @@ func ParseValues(values url.Values) (IssueForm, error) {
 		PullRequest:       strings.TrimSpace(values.Get("pull_request")),
 		Priority:          strings.TrimSpace(values.Get("priority")),
 		Labels:            splitCSV(values.Get("labels")),
+		SubtaskNames:      splitList(values.Get("subtask_names")),
 		AssigneeAccountID: strings.TrimSpace(values.Get("assignee_account_id")),
 		ReporterAccountID: strings.TrimSpace(values.Get("reporter_account_id")),
 	}
@@ -380,6 +395,17 @@ func JS() template.JS {
 
 func splitCSV(raw string) []string {
 	parts := strings.Split(raw, ",")
+	return cleanList(parts)
+}
+
+func splitList(raw string) []string {
+	parts := strings.FieldsFunc(raw, func(r rune) bool {
+		return r == ',' || r == '\n' || r == '\r' || r == ';'
+	})
+	return cleanList(parts)
+}
+
+func cleanList(parts []string) []string {
 	values := make([]string, 0, len(parts))
 	for _, part := range parts {
 		value := strings.TrimSpace(part)
@@ -398,6 +424,7 @@ const formTmpl = `{{define "jira-create-form"}}
 <div class="hx-jira-create">
   {{template "jira-create-result" .}}
   {{if .ProjectsErr}}<div class="hx-jira-create-warn">Could not load Jira projects: {{.ProjectsErr}}</div>{{end}}
+	{{if .IssueTypesErr}}<div class="hx-jira-create-warn">Could not load Jira issue types: {{.IssueTypesErr}}</div>{{end}}
   {{if .AssigneesErr}}<div class="hx-jira-create-warn">Could not load Jira assignees: {{.AssigneesErr}}</div>{{end}}
 	{{if .PullRequestReposErr}}<div class="hx-jira-create-warn">Could not load GitHub repositories: {{.PullRequestReposErr}}</div>{{end}}
 	{{if .PullRequestsErr}}<div class="hx-jira-create-warn">Could not load pull requests: {{.PullRequestsErr}}</div>{{end}}
@@ -413,7 +440,7 @@ const formTmpl = `{{define "jira-create-form"}}
         {{end}}
       </label>
       <label class="hx-jira-create-field">Issue type
-        <select name="issue_type">
+				<select name="issue_type"{{if not .IssueTypes}} disabled{{end}}>
           {{range .IssueTypes}}<option value="{{.}}"{{if selected $.Values.IssueType .}} selected{{end}}>{{.}}</option>{{end}}
         </select>
       </label>
@@ -438,6 +465,7 @@ const formTmpl = `{{define "jira-create-form"}}
       </label>
       <label class="hx-jira-create-field">Labels<input name="labels" type="text" value="{{.Values.LabelsCSV}}" autocomplete="off"></label>
     </div>
+		<label class="hx-jira-create-field">Subtask names<textarea name="subtask_names">{{.Values.SubtaskNamesText}}</textarea></label>
     <div class="hx-jira-create-grid">
       <label class="hx-jira-create-field">Assignee
 				<input name="assignee_search" type="search" list="{{.AssigneeOptionsID}}" autocomplete="off" placeholder="Search users" hx-get="{{.UsersEndpoint}}" hx-trigger="input changed delay:250ms, focus once" hx-target="#{{.AssigneeOptionsID}}" hx-swap="outerHTML" hx-include="[name='project_key'], this" hx-vals='{"field":"assignee"}' data-jira-user-input data-jira-user-target="assignee_account_id">
@@ -493,6 +521,7 @@ const resultTmpl = `{{define "jira-create-result"}}
 <div class="hx-jira-create-result" id="{{.ResultID}}" aria-live="polite">
   {{if .Result.Err}}<div class="hx-jira-create-warn">{{.Result.Err}}</div>{{end}}
   {{if .Result.Key}}<div class="hx-jira-create-notice">Created <a href="{{.Result.URL}}" target="_blank" rel="noreferrer">{{.Result.Key}}</a></div>{{end}}
+	{{if .Result.Subtasks}}<div class="hx-jira-create-notice">Subtasks: {{range $i, $it := .Result.Subtasks}}{{if $i}}, {{end}}<a href="{{$it.URL}}" target="_blank" rel="noreferrer">{{$it.Key}}</a>{{end}}</div>{{end}}
 </div>
 {{end}}`
 

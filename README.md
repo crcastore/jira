@@ -72,7 +72,7 @@ Use a model that supports tool calling. Local model quality varies; `llama3.1:8b
 - `show open issues in owner/repo`
 - `show issue #17 in owner/repo`
 - `show files changed in MR #12 in owner/repo`
-- Create a Jira issue from the web form, choose a GitHub repository, then choose an available **PR / MR** to append PR details and changed files to the issue description. See [JIRA_CREATE_EXTRACTION.md](JIRA_CREATE_EXTRACTION.md) for how to reuse this flow elsewhere.
+- Create a Jira issue from the web form, choose a GitHub repository, then choose an available **PR / MR** to append PR details and changed files to the issue description. Issue types are loaded from the selected Jira project. Add names in **Subtask names** to create one child subtask per name. See [JIRA_CREATE_EXTRACTION.md](JIRA_CREATE_EXTRACTION.md) for how to reuse this flow elsewhere.
 - `create an issue in owner/repo titled "Fix flaky login test" with label bug`
 - `comment on issue #17 in owner/repo saying "looking into this today"`
 - `close issue #17 in owner/repo`

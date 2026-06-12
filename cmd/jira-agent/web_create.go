@@ -2,6 +2,7 @@ package main
 
 import (
 	"encoding/json"
+	"fmt"
 	"html/template"
 	"net/http"
 	"strings"
@@ -66,6 +67,11 @@ func (a *webApp) jiraCreateFormData(values jiraissueui.IssueForm, result jiraiss
 	if values.ProjectKey == "" && len(projects) > 0 {
 		values.ProjectKey = projects[0].Key
 	}
+	issueTypes, issueTypesErr := a.fetchJiraIssueTypes(values.ProjectKey)
+	parentIssueTypes := parentIssueTypeNames(issueTypes)
+	if len(parentIssueTypes) > 0 {
+		values.IssueType = validParentIssueType(values.IssueType, issueTypes)
+	}
 	assignees, assigneesErr := a.fetchJiraAssignableUsers(values.ProjectKey, "")
 	if values.PullRequestRepo == "" && values.PullRequest != "" {
 		if ref, err := githubpr.ParseReference(values.PullRequest); err == nil {
@@ -80,13 +86,15 @@ func (a *webApp) jiraCreateFormData(values jiraissueui.IssueForm, result jiraiss
 		PullRequestsEndpoint: "/jira/create/pull-requests",
 		UsersEndpoint:        "/jira/create/users",
 		Projects:             projects,
-		ProjectsErr:          errString(projectsErr),
 		Assignees:            assignees,
 		AssigneesErr:         errString(assigneesErr),
+		IssueTypesErr:        errString(issueTypesErr),
 		PullRequestRepos:     pullRequestRepos,
 		PullRequestReposErr:  errString(pullRequestReposErr),
 		PullRequests:         pullRequests,
 		PullRequestsErr:      errString(pullRequestsErr),
+		IssueTypes:           parentIssueTypes,
+		ProjectsErr:          errString(projectsErr),
 		Values:               values,
 		Result:               result,
 	}
@@ -190,17 +198,49 @@ func (a *webApp) createJiraIssue(form jiraissueui.IssueForm) jiraissueui.Result 
 	if err != nil {
 		return jiraissueui.Result{Err: errString(err)}
 	}
+	issueTypes, issueTypesErr := a.fetchJiraIssueTypes(enriched.ProjectKey)
+	if issueTypesErr == nil && len(issueTypes) > 0 {
+		enriched.IssueType = validParentIssueType(enriched.IssueType, issueTypes)
+		if enriched.IssueType == "" {
+			return jiraissueui.Result{Err: "Jira project has no creatable parent issue types"}
+		}
+	}
+	subtaskIssueType := "Sub-task"
+	if len(enriched.SubtaskNames) > 0 && issueTypesErr == nil && len(issueTypes) > 0 {
+		subtaskIssueType = firstSubtaskIssueTypeName(issueTypes)
+		if subtaskIssueType == "" {
+			return jiraissueui.Result{Err: "Jira project has no subtask issue type enabled"}
+		}
+	}
 
 	raw, err := a.jc.CreateIssue(createIssueArgsFromForm(enriched))
 	if err != nil {
 		return jiraissueui.Result{Err: errString(err)}
 	}
 
-	key, ok := parseCreatedIssueKey(raw)
+	created, ok := parseCreatedIssue(raw)
 	if !ok {
 		return jiraissueui.Result{Err: "Jira created the issue but returned an unexpected response"}
 	}
-	return jiraissueui.Result{Key: key, URL: a.jc.baseURL + "/browse/" + key}
+	key := created.Key
+	result := jiraissueui.Result{Key: key, URL: a.jc.baseURL + "/browse/" + key}
+	for _, name := range enriched.SubtaskNames {
+		subtaskRaw, err := a.jc.CreateIssue(createSubtaskArgsFromForm(enriched, created, name, subtaskIssueType))
+		if err != nil {
+			result.Err = fmt.Sprintf("created %s but failed to create subtask for %s: %v", key, name, err)
+			return result
+		}
+		subtask, ok := parseCreatedIssue(subtaskRaw)
+		if !ok {
+			result.Err = fmt.Sprintf("created %s but Jira returned an unexpected response for subtask %s", key, name)
+			return result
+		}
+		result.Subtasks = append(result.Subtasks, jiraissueui.IssueLink{
+			Key: subtask.Key,
+			URL: a.jc.baseURL + "/browse/" + subtask.Key,
+		})
+	}
+	return result
 }
 
 func createIssueArgsFromForm(form jiraissueui.IssueForm) CreateIssueArgs {
@@ -216,11 +256,31 @@ func createIssueArgsFromForm(form jiraissueui.IssueForm) CreateIssueArgs {
 	}
 }
 
-func parseCreatedIssueKey(raw json.RawMessage) (string, bool) {
-	var created struct {
-		Key string `json:"key"`
-	}
+func createSubtaskArgsFromForm(form jiraissueui.IssueForm, parent createdIssue, name, issueType string) CreateIssueArgs {
+	args := createIssueArgsFromForm(form)
+	args.IssueType = issueType
+	args.ParentID = parent.ID
+	args.ParentKey = parent.Key
+	args.Summary = fmt.Sprintf("%s - %s", form.Summary, name)
+	return args
+}
+
+type createdIssue struct {
+	ID  string `json:"id"`
+	Key string `json:"key"`
+}
+
+func parseCreatedIssue(raw json.RawMessage) (createdIssue, bool) {
+	var created createdIssue
 	if err := json.Unmarshal(raw, &created); err != nil || created.Key == "" {
+		return createdIssue{}, false
+	}
+	return created, true
+}
+
+func parseCreatedIssueKey(raw json.RawMessage) (string, bool) {
+	created, ok := parseCreatedIssue(raw)
+	if !ok {
 		return "", false
 	}
 	return created.Key, true
