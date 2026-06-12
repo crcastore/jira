@@ -63,24 +63,3 @@ func envOrInt(k string, def int) int {
 	}
 	return n
 }
-
-func containsString(values []string, want string) bool {
-	for _, value := range values {
-		if value == want {
-			return true
-		}
-	}
-	return false
-}
-
-func splitCSV(raw string) []string {
-	parts := strings.Split(raw, ",")
-	values := make([]string, 0, len(parts))
-	for _, part := range parts {
-		value := strings.TrimSpace(part)
-		if value != "" {
-			values = append(values, value)
-		}
-	}
-	return values
-}

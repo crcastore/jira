@@ -72,7 +72,7 @@ Use a model that supports tool calling. Local model quality varies; `llama3.1:8b
 - `show open issues in owner/repo`
 - `show issue #17 in owner/repo`
 - `show files changed in MR #12 in owner/repo`
-- Create a Jira issue from the web form, choose a GitHub repository, then choose an available **PR / MR** to append PR details and changed files to the issue description.
+- Create a Jira issue from the web form, choose a GitHub repository, then choose an available **PR / MR** to append PR details and changed files to the issue description. See [JIRA_CREATE_EXTRACTION.md](JIRA_CREATE_EXTRACTION.md) for how to reuse this flow elsewhere.
 - `create an issue in owner/repo titled "Fix flaky login test" with label bug`
 - `comment on issue #17 in owner/repo saying "looking into this today"`
 - `close issue #17 in owner/repo`
@@ -106,7 +106,8 @@ Use a model that supports tool calling. Local model quality varies; `llama3.1:8b
 | [chat/](chat/) | Tool-calling chat engine and session store |
 | [chathttp/](chathttp/) | Reusable HTMX chat, reset, and token-limit handlers |
 | [chatui/](chatui/) | Drop-in HTMX chat widget |
-| [jiraissueui/](jiraissueui/) | Drop-in HTMX Jira issue create button, dialog, form, and parser. See [JIRA_ISSUE_UI.md](JIRA_ISSUE_UI.md). |
+| [githubpr/](githubpr/) | Reusable GitHub repository + PR/MR picker and changed-file enrichment for Jira issue forms |
+| [jiraissueui/](jiraissueui/) | Drop-in HTMX Jira issue create button, dialog, form, and parser. See [JIRA_ISSUE_UI.md](JIRA_ISSUE_UI.md) and [JIRA_CREATE_EXTRACTION.md](JIRA_CREATE_EXTRACTION.md). |
 
 ## Test
 

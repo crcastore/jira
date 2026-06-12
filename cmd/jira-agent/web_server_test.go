@@ -406,31 +406,6 @@ func TestHandleJiraCreatePullRequestsRendersOptions(t *testing.T) {
 	}
 }
 
-func TestParsePullRequestReference(t *testing.T) {
-	cases := map[string]pullRequestRef{
-		"https://github.com/octo/hello/pull/12": {Owner: "octo", Repo: "hello", Number: 12},
-		"github.com/octo/hello/pull/12":         {Owner: "octo", Repo: "hello", Number: 12},
-		"octo/hello#12":                         {Owner: "octo", Repo: "hello", Number: 12},
-		"octo/hello!12":                         {Owner: "octo", Repo: "hello", Number: 12},
-		"octo/hello/pull/12":                    {Owner: "octo", Repo: "hello", Number: 12},
-		"octo/hello/12":                         {Owner: "octo", Repo: "hello", Number: 12},
-	}
-	for input, want := range cases {
-		got, err := parsePullRequestReference(input)
-		if err != nil {
-			t.Fatalf("parsePullRequestReference(%q) returned error: %v", input, err)
-		}
-		if got != want {
-			t.Fatalf("parsePullRequestReference(%q) = %+v, want %+v", input, got, want)
-		}
-	}
-	for _, input := range []string{"", "octo/hello", "octo/hello#nope", "https://github.com/octo/hello/issues/12"} {
-		if got, err := parsePullRequestReference(input); err == nil {
-			t.Fatalf("parsePullRequestReference(%q) = %+v, want error", input, got)
-		}
-	}
-}
-
 func TestHandleJiraCreateHTMXPostReturnsResultOnly(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path != "/rest/api/3/issue" {

@@ -4,8 +4,8 @@ import (
 	"encoding/json"
 	"fmt"
 	"sort"
-	"strings"
 
+	"github.com/ccastorena/jira-agent/githubpr"
 	"github.com/ccastorena/jira-agent/jiraissueui"
 )
 
@@ -157,84 +157,9 @@ func (a *webApp) fetchJiraAssignableUsers(projectKey string) ([]jiraissueui.User
 	return items, nil
 }
 
-func (a *webApp) fetchPullRequestRepos() ([]jiraissueui.PullRequestRepo, error) {
+func (a *webApp) pullRequestPicker() githubpr.Picker {
 	if a.gc == nil {
-		return nil, nil
+		return githubpr.NewPicker(nil)
 	}
-	raw, err := a.gc.ListMyRepos("all", "pushed", 150)
-	if err != nil {
-		return nil, err
-	}
-	var payload []struct {
-		FullName string `json:"full_name"`
-	}
-	if err := json.Unmarshal(raw, &payload); err != nil {
-		return nil, err
-	}
-	items := make([]jiraissueui.PullRequestRepo, 0, len(payload))
-	for _, repo := range payload {
-		if repo.FullName == "" {
-			continue
-		}
-		items = append(items, jiraissueui.PullRequestRepo{FullName: repo.FullName})
-	}
-	sort.Slice(items, func(i, j int) bool { return items[i].FullName < items[j].FullName })
-	return items, nil
-}
-
-func (a *webApp) fetchPullRequestsForRepo(fullName string) ([]jiraissueui.PullRequestOption, error) {
-	fullName = strings.TrimSpace(fullName)
-	if fullName == "" {
-		return nil, nil
-	}
-	if a.gc == nil {
-		return nil, fmt.Errorf("GITHUB_TOKEN not set")
-	}
-	owner, repo, ok := splitOwnerRepo(fullName)
-	if !ok {
-		return nil, fmt.Errorf("invalid repository %q", fullName)
-	}
-	raw, err := a.gc.ListPulls(owner, repo, "all", 100)
-	if err != nil {
-		return nil, err
-	}
-	var payload []struct {
-		Number   int    `json:"number"`
-		Title    string `json:"title"`
-		State    string `json:"state"`
-		MergedAt string `json:"merged_at"`
-		Head     struct {
-			Ref string `json:"ref"`
-		} `json:"head"`
-		Base struct {
-			Ref string `json:"ref"`
-		} `json:"base"`
-	}
-	if err := json.Unmarshal(raw, &payload); err != nil {
-		return nil, err
-	}
-	items := make([]jiraissueui.PullRequestOption, 0, len(payload))
-	for _, pr := range payload {
-		if pr.Number <= 0 {
-			continue
-		}
-		label := fmt.Sprintf("#%d", pr.Number)
-		if pr.Title != "" {
-			label += " " + pr.Title
-		}
-		if pr.MergedAt != "" {
-			label += " [merged]"
-		} else if pr.State != "" && pr.State != "open" {
-			label += " [" + pr.State + "]"
-		}
-		if pr.Head.Ref != "" || pr.Base.Ref != "" {
-			label += fmt.Sprintf(" (%s -> %s)", pr.Head.Ref, pr.Base.Ref)
-		}
-		items = append(items, jiraissueui.PullRequestOption{
-			Value: fmt.Sprintf("%s#%d", fullName, pr.Number),
-			Label: label,
-		})
-	}
-	sort.Slice(items, func(i, j int) bool { return items[i].Value > items[j].Value })
-	return items, nil
+	return githubpr.NewPicker(a.gc)
 }

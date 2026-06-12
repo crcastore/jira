@@ -192,12 +192,12 @@ func loadDotEnv(path string) {
 		if line == "" || strings.HasPrefix(line, "#") {
 			continue
 		}
-		eq := strings.IndexByte(line, '=')
-		if eq < 0 {
+		k, v, ok := strings.Cut(line, "=")
+		if !ok {
 			continue
 		}
-		k := strings.TrimSpace(line[:eq])
-		v := strings.TrimSpace(line[eq+1:])
+		k = strings.TrimSpace(k)
+		v = strings.TrimSpace(v)
 		v = strings.Trim(v, `"'`)
 		os.Setenv(k, v)
 	}

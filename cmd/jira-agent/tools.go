@@ -549,10 +549,7 @@ func trimGitHub(name string, raw json.RawMessage) json.RawMessage {
 		if err := json.Unmarshal(raw, &payload); err != nil {
 			return raw
 		}
-		slim := make([]map[string]any, 0, len(payload.WorkflowRuns))
-		for _, r := range payload.WorkflowRuns {
-			slim = append(slim, slimWorkflowRun(r))
-		}
+		slim := slimMaps(payload.WorkflowRuns, slimWorkflowRun)
 		b, _ := json.Marshal(map[string]any{
 			"total_count": payload.TotalCount, "returned": len(slim), "runs": slim})
 		return b
@@ -669,10 +666,12 @@ func labelNames(v any) []string {
 	}
 	out := make([]string, 0, len(arr))
 	for _, l := range arr {
-		if m, ok := l.(map[string]any); ok {
-			if name, ok := m["name"].(string); ok {
-				out = append(out, name)
-			}
+		m, ok := l.(map[string]any)
+		if !ok {
+			continue
+		}
+		if name, ok := m["name"].(string); ok {
+			out = append(out, name)
 		}
 	}
 	return out
@@ -705,10 +704,7 @@ func slimArray(raw json.RawMessage, fn func(map[string]any) map[string]any) json
 	if err := json.Unmarshal(raw, &arr); err != nil {
 		return raw
 	}
-	slim := make([]map[string]any, 0, len(arr))
-	for _, m := range arr {
-		slim = append(slim, fn(m))
-	}
+	slim := slimMaps(arr, fn)
 	b, _ := json.Marshal(map[string]any{"count": len(slim), "items": slim})
 	return b
 }
@@ -722,10 +718,7 @@ func slimSearchItems(raw json.RawMessage, fn func(map[string]any) map[string]any
 	if err := json.Unmarshal(raw, &payload); err != nil {
 		return raw
 	}
-	slim := make([]map[string]any, 0, len(payload.Items))
-	for _, m := range payload.Items {
-		slim = append(slim, fn(m))
-	}
+	slim := slimMaps(payload.Items, fn)
 	b, _ := json.Marshal(map[string]any{
 		"total_count":        payload.TotalCount,
 		"incomplete_results": payload.IncompleteResults,
@@ -733,6 +726,14 @@ func slimSearchItems(raw json.RawMessage, fn func(map[string]any) map[string]any
 		"items":              slim,
 	})
 	return b
+}
+
+func slimMaps(items []map[string]any, fn func(map[string]any) map[string]any) []map[string]any {
+	slim := make([]map[string]any, 0, len(items))
+	for _, item := range items {
+		slim = append(slim, fn(item))
+	}
+	return slim
 }
 
 func pickFields(raw json.RawMessage, keys ...string) json.RawMessage {
