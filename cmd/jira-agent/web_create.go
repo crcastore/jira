@@ -1,8 +1,6 @@
 package main
 
 import (
-	"encoding/json"
-	"fmt"
 	"html/template"
 	"net/http"
 	"strings"
@@ -191,97 +189,4 @@ func (a *webApp) createJiraIssueFromRequest(r *http.Request) (jiraissueui.IssueF
 		return form, jiraissueui.Result{Err: err.Error()}
 	}
 	return form, a.createJiraIssue(form)
-}
-
-func (a *webApp) createJiraIssue(form jiraissueui.IssueForm) jiraissueui.Result {
-	enriched, err := a.pullRequestPicker().EnrichIssue(form)
-	if err != nil {
-		return jiraissueui.Result{Err: errString(err)}
-	}
-	issueTypes, issueTypesErr := a.fetchJiraIssueTypes(enriched.ProjectKey)
-	if issueTypesErr == nil && len(issueTypes) > 0 {
-		enriched.IssueType = validParentIssueType(enriched.IssueType, issueTypes)
-		if enriched.IssueType == "" {
-			return jiraissueui.Result{Err: "Jira project has no creatable parent issue types"}
-		}
-	}
-	subtaskIssueType := "Sub-task"
-	if len(enriched.SubtaskNames) > 0 && issueTypesErr == nil && len(issueTypes) > 0 {
-		subtaskIssueType = firstSubtaskIssueTypeName(issueTypes)
-		if subtaskIssueType == "" {
-			return jiraissueui.Result{Err: "Jira project has no subtask issue type enabled"}
-		}
-	}
-
-	raw, err := a.jc.CreateIssue(createIssueArgsFromForm(enriched))
-	if err != nil {
-		return jiraissueui.Result{Err: errString(err)}
-	}
-
-	created, ok := parseCreatedIssue(raw)
-	if !ok {
-		return jiraissueui.Result{Err: "Jira created the issue but returned an unexpected response"}
-	}
-	key := created.Key
-	result := jiraissueui.Result{Key: key, URL: a.jc.baseURL + "/browse/" + key}
-	for _, name := range enriched.SubtaskNames {
-		subtaskRaw, err := a.jc.CreateIssue(createSubtaskArgsFromForm(enriched, created, name, subtaskIssueType))
-		if err != nil {
-			result.Err = fmt.Sprintf("created %s but failed to create subtask for %s: %v", key, name, err)
-			return result
-		}
-		subtask, ok := parseCreatedIssue(subtaskRaw)
-		if !ok {
-			result.Err = fmt.Sprintf("created %s but Jira returned an unexpected response for subtask %s", key, name)
-			return result
-		}
-		result.Subtasks = append(result.Subtasks, jiraissueui.IssueLink{
-			Key: subtask.Key,
-			URL: a.jc.baseURL + "/browse/" + subtask.Key,
-		})
-	}
-	return result
-}
-
-func createIssueArgsFromForm(form jiraissueui.IssueForm) CreateIssueArgs {
-	return CreateIssueArgs{
-		ProjectKey:        form.ProjectKey,
-		Summary:           form.Summary,
-		IssueType:         form.IssueType,
-		Description:       form.Description,
-		Priority:          form.Priority,
-		Labels:            form.Labels,
-		AssigneeAccountID: form.AssigneeAccountID,
-		ReporterAccountID: form.ReporterAccountID,
-	}
-}
-
-func createSubtaskArgsFromForm(form jiraissueui.IssueForm, parent createdIssue, name, issueType string) CreateIssueArgs {
-	args := createIssueArgsFromForm(form)
-	args.IssueType = issueType
-	args.ParentID = parent.ID
-	args.ParentKey = parent.Key
-	args.Summary = fmt.Sprintf("%s - %s", form.Summary, name)
-	return args
-}
-
-type createdIssue struct {
-	ID  string `json:"id"`
-	Key string `json:"key"`
-}
-
-func parseCreatedIssue(raw json.RawMessage) (createdIssue, bool) {
-	var created createdIssue
-	if err := json.Unmarshal(raw, &created); err != nil || created.Key == "" {
-		return createdIssue{}, false
-	}
-	return created, true
-}
-
-func parseCreatedIssueKey(raw json.RawMessage) (string, bool) {
-	created, ok := parseCreatedIssue(raw)
-	if !ok {
-		return "", false
-	}
-	return created.Key, true
 }

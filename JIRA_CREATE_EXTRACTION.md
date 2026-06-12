@@ -17,6 +17,15 @@ There are two reusable packages:
 The app-specific files under [cmd/jira-agent/](cmd/jira-agent/) only wire those
 packages to this repo's Jira and GitHub clients.
 
+The create/subtask wiring is split by concern:
+
+| File | Purpose |
+| --- | --- |
+| [cmd/jira-agent/web_create.go](cmd/jira-agent/web_create.go) | HTTP form/page/fragment handlers. |
+| [cmd/jira-agent/web_create_issue.go](cmd/jira-agent/web_create_issue.go) | Parent issue creation, subtask creation, Jira create-response parsing, and form-to-Jira argument mapping. |
+| [cmd/jira-agent/web_issue_types.go](cmd/jira-agent/web_issue_types.go) | Jira createmeta parsing, parent issue type filtering, subtask issue type selection, and Epic/higher-level issue exclusion. |
+| [cmd/jira-agent/web_data.go](cmd/jira-agent/web_data.go) | General Jira/GitHub panel data and assignable-user mapping. |
+
 ## Current Runtime Flow
 
 1. The dashboard or dedicated create page asks [cmd/jira-agent/web_create.go](cmd/jira-agent/web_create.go) for form data.
