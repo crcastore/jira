@@ -12,6 +12,7 @@ import (
 
 type jiraCreatePageData struct {
 	CreateStyles template.HTML
+	CreateScript template.HTML
 	CreateForm   template.HTML
 }
 
@@ -55,6 +56,7 @@ func (a *webApp) newJiraCreatePageData(r *http.Request) (jiraCreatePageData, err
 
 	return jiraCreatePageData{
 		CreateStyles: jiraissueui.StyleTag(),
+		CreateScript: jiraissueui.ScriptTag(),
 		CreateForm:   form,
 	}, nil
 }
@@ -64,7 +66,7 @@ func (a *webApp) jiraCreateFormData(values jiraissueui.IssueForm, result jiraiss
 	if values.ProjectKey == "" && len(projects) > 0 {
 		values.ProjectKey = projects[0].Key
 	}
-	assignees, assigneesErr := a.fetchJiraAssignableUsers(values.ProjectKey)
+	assignees, assigneesErr := a.fetchJiraAssignableUsers(values.ProjectKey, "")
 	if values.PullRequestRepo == "" && values.PullRequest != "" {
 		if ref, err := githubpr.ParseReference(values.PullRequest); err == nil {
 			values.PullRequestRepo = ref.FullName()
@@ -76,6 +78,7 @@ func (a *webApp) jiraCreateFormData(values jiraissueui.IssueForm, result jiraiss
 	return jiraissueui.FormData{
 		Endpoint:             "/jira/create",
 		PullRequestsEndpoint: "/jira/create/pull-requests",
+		UsersEndpoint:        "/jira/create/users",
 		Projects:             projects,
 		ProjectsErr:          errString(projectsErr),
 		Assignees:            assignees,
@@ -87,6 +90,37 @@ func (a *webApp) jiraCreateFormData(values jiraissueui.IssueForm, result jiraiss
 		Values:               values,
 		Result:               result,
 	}
+}
+
+func (a *webApp) handleJiraCreateUsers(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+
+	field := strings.ToLower(strings.TrimSpace(r.URL.Query().Get("field")))
+	if field != "reporter" {
+		field = "assignee"
+	}
+
+	optionsID := jiraissueui.DefaultAssigneeOptionsID
+	query := strings.TrimSpace(r.URL.Query().Get("assignee_search"))
+	if field == "reporter" {
+		optionsID = jiraissueui.DefaultReporterOptionsID
+		query = strings.TrimSpace(r.URL.Query().Get("reporter_search"))
+	}
+
+	users, err := a.fetchJiraAssignableUsers(selectedJiraProject(r), query)
+	if err != nil {
+		http.Error(w, errString(err), http.StatusInternalServerError)
+		return
+	}
+
+	w.Header().Set("Content-Type", "text/html; charset=utf-8")
+	_ = a.jiraCreateComponent().RenderUserOptions(w, jiraissueui.UserOptionsData{
+		OptionsID: optionsID,
+		Users:     users,
+	})
 }
 
 func (a *webApp) handleJiraCreatePullRequests(w http.ResponseWriter, r *http.Request) {

@@ -4,10 +4,13 @@ import (
 	"encoding/json"
 	"fmt"
 	"sort"
+	"strings"
 
 	"github.com/ccastorena/jira-agent/githubpr"
 	"github.com/ccastorena/jira-agent/jiraissueui"
 )
+
+const jiraUserSearchLimit = 20
 
 type repoItem struct {
 	FullName string
@@ -130,11 +133,11 @@ func (a *webApp) fetchJiraProjects() ([]jiraissueui.Project, error) {
 	return items, nil
 }
 
-func (a *webApp) fetchJiraAssignableUsers(projectKey string) ([]jiraissueui.User, error) {
+func (a *webApp) fetchJiraAssignableUsers(projectKey, query string) ([]jiraissueui.User, error) {
 	if projectKey == "" {
 		return nil, nil
 	}
-	raw, err := a.jc.SearchAssignableUsers(projectKey, 50)
+	raw, err := a.jc.SearchAssignableUsers(projectKey, strings.TrimSpace(query), jiraUserSearchLimit)
 	if err != nil {
 		return nil, err
 	}

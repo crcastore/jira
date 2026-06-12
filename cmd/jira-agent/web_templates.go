@@ -394,6 +394,7 @@ var createIssuePageTmpl = template.Must(template.New("create-issue-page").Parse(
     .hx-jira-create { --jira-create-accent: linear-gradient(135deg, var(--accent), var(--accent-2)); }
   </style>
   {{.CreateStyles}}
+  {{.CreateScript}}
 </head>
 <body>
   <div class="top-shell">

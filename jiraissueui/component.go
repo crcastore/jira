@@ -20,9 +20,12 @@ import (
 const (
 	DefaultEndpoint             = "/jira/create"
 	DefaultPullRequestsEndpoint = "/jira/create/pull-requests"
+	DefaultUsersEndpoint        = "/jira/create/users"
 	DefaultDialogID             = "jira-create-dialog"
 	DefaultResultID             = "jira-create-result"
 	DefaultPullRequestsID       = "jira-create-pull-requests"
+	DefaultAssigneeOptionsID    = "jira-create-assignee-options"
+	DefaultReporterOptionsID    = "jira-create-reporter-options"
 	DefaultWorkingID            = "jira-create-working"
 	DefaultButtonLabel          = "Create Jira Issue"
 	DefaultTitle                = "Create Jira Issue"
@@ -43,7 +46,7 @@ type Project struct {
 	Name string
 }
 
-// User is a Jira user option shown in assignee and reporter dropdowns.
+// User is a Jira user option shown in assignee and reporter search results.
 type User struct {
 	AccountID   string
 	DisplayName string
@@ -99,8 +102,11 @@ type Result struct {
 type FormData struct {
 	Endpoint             string
 	PullRequestsEndpoint string
+	UsersEndpoint        string
 	ResultID             string
 	PullRequestsID       string
+	AssigneeOptionsID    string
+	ReporterOptionsID    string
 	WorkingID            string
 	SubmitLabel          string
 
@@ -117,6 +123,12 @@ type FormData struct {
 	Priorities []string
 	Values     IssueForm
 	Result     Result
+}
+
+// UserOptionsData configures a replaceable datalist of Jira user search results.
+type UserOptionsData struct {
+	OptionsID string
+	Users     []User
 }
 
 // LauncherData configures a create issue button that opens a Jira create dialog.
@@ -178,11 +190,20 @@ func (d *FormData) applyDefaults() {
 	if d.PullRequestsEndpoint == "" {
 		d.PullRequestsEndpoint = DefaultPullRequestsEndpoint
 	}
+	if d.UsersEndpoint == "" {
+		d.UsersEndpoint = DefaultUsersEndpoint
+	}
 	if d.ResultID == "" {
 		d.ResultID = DefaultResultID
 	}
 	if d.PullRequestsID == "" {
 		d.PullRequestsID = DefaultPullRequestsID
+	}
+	if d.AssigneeOptionsID == "" {
+		d.AssigneeOptionsID = DefaultAssigneeOptionsID
+	}
+	if d.ReporterOptionsID == "" {
+		d.ReporterOptionsID = DefaultReporterOptionsID
 	}
 	if d.WorkingID == "" {
 		d.WorkingID = DefaultWorkingID
@@ -214,7 +235,7 @@ func New() *Component {
 	return &Component{tmpl: template.Must(template.New("jiraissueui").Funcs(template.FuncMap{
 		"jiraCreateJS": JS,
 		"selected":     selected,
-	}).Parse(formTmpl + pullRequestFieldTmpl + resultTmpl + launcherTmpl + dialogTmpl))}
+	}).Parse(formTmpl + pullRequestFieldTmpl + userOptionsTmpl + resultTmpl + launcherTmpl + dialogTmpl))}
 }
 
 // RenderForm writes the full embeddable create issue form to w.
@@ -248,6 +269,23 @@ func (c *Component) RenderPullRequestField(w io.Writer, data FormData) error {
 func (c *Component) PullRequestFieldHTML(data FormData) (template.HTML, error) {
 	var buf bytes.Buffer
 	if err := c.RenderPullRequestField(&buf, data); err != nil {
+		return "", err
+	}
+	return template.HTML(buf.String()), nil
+}
+
+// RenderUserOptions writes only a datalist of Jira user search results.
+func (c *Component) RenderUserOptions(w io.Writer, data UserOptionsData) error {
+	if data.OptionsID == "" {
+		data.OptionsID = DefaultAssigneeOptionsID
+	}
+	return c.tmpl.ExecuteTemplate(w, "jira-create-user-options-list", data)
+}
+
+// UserOptionsHTML returns only a datalist of Jira user search results.
+func (c *Component) UserOptionsHTML(data UserOptionsData) (template.HTML, error) {
+	var buf bytes.Buffer
+	if err := c.RenderUserOptions(&buf, data); err != nil {
 		return "", err
 	}
 	return template.HTML(buf.String()), nil
@@ -402,16 +440,14 @@ const formTmpl = `{{define "jira-create-form"}}
     </div>
     <div class="hx-jira-create-grid">
       <label class="hx-jira-create-field">Assignee
-        <select name="assignee_account_id">
-          <option value="">Unassigned</option>
-          {{range .Assignees}}<option value="{{.AccountID}}"{{if selected $.Values.AssigneeAccountID .AccountID}} selected{{end}}>{{.DisplayName}}</option>{{end}}
-        </select>
+				<input name="assignee_search" type="search" list="{{.AssigneeOptionsID}}" autocomplete="off" placeholder="Search users" hx-get="{{.UsersEndpoint}}" hx-trigger="input changed delay:250ms, focus once" hx-target="#{{.AssigneeOptionsID}}" hx-swap="outerHTML" hx-include="[name='project_key'], this" hx-vals='{"field":"assignee"}' data-jira-user-input data-jira-user-target="assignee_account_id">
+				<input name="assignee_account_id" type="hidden" value="{{.Values.AssigneeAccountID}}">
+				{{template "jira-create-assignee-options" .}}
       </label>
       <label class="hx-jira-create-field">Reporter
-        <select name="reporter_account_id">
-          <option value="">Default</option>
-          {{range .Assignees}}<option value="{{.AccountID}}"{{if selected $.Values.ReporterAccountID .AccountID}} selected{{end}}>{{.DisplayName}}</option>{{end}}
-        </select>
+				<input name="reporter_search" type="search" list="{{.ReporterOptionsID}}" autocomplete="off" placeholder="Search users" hx-get="{{.UsersEndpoint}}" hx-trigger="input changed delay:250ms, focus once" hx-target="#{{.ReporterOptionsID}}" hx-swap="outerHTML" hx-include="[name='project_key'], this" hx-vals='{"field":"reporter"}' data-jira-user-input data-jira-user-target="reporter_account_id">
+				<input name="reporter_account_id" type="hidden" value="{{.Values.ReporterAccountID}}">
+				{{template "jira-create-reporter-options" .}}
       </label>
     </div>
     <div class="hx-jira-create-working htmx-indicator" id="{{.WorkingID}}" role="status" aria-live="polite">Creating issue...</div>
@@ -433,6 +469,24 @@ const pullRequestFieldTmpl = `{{define "jira-create-pull-request-field-wrapper"}
 		{{range .PullRequests}}<option value="{{.Value}}"{{if selected $.Values.PullRequest .Value}} selected{{end}}>{{.Label}}</option>{{end}}
 	</select>
 </label>
+{{end}}`
+
+const userOptionsTmpl = `{{define "jira-create-assignee-options"}}
+<datalist id="{{.AssigneeOptionsID}}">
+	{{range .Assignees}}<option value="{{.DisplayName}}" data-account-id="{{.AccountID}}"></option>{{end}}
+</datalist>
+{{end}}
+
+{{define "jira-create-reporter-options"}}
+<datalist id="{{.ReporterOptionsID}}">
+	{{range .Assignees}}<option value="{{.DisplayName}}" data-account-id="{{.AccountID}}"></option>{{end}}
+</datalist>
+{{end}}
+
+{{define "jira-create-user-options-list"}}
+<datalist id="{{.OptionsID}}">
+	{{range .Users}}<option value="{{.DisplayName}}" data-account-id="{{.AccountID}}"></option>{{end}}
+</datalist>
 {{end}}`
 
 const resultTmpl = `{{define "jira-create-result"}}
@@ -510,7 +564,44 @@ const componentJS = `
 		});
 	}
 
+	function selectedAccountID(input){
+		var listID = input.getAttribute('list');
+		var list = listID ? document.getElementById(listID) : null;
+		if(!list || !input.value){ return ""; }
+		var options = list.querySelectorAll('option');
+		for(var i = 0; i < options.length; i++){
+			if(options[i].value === input.value){
+				return options[i].getAttribute('data-account-id') || "";
+			}
+		}
+		return "";
+	}
+
+	function syncUserPicker(input){
+		var target = input.getAttribute('data-jira-user-target');
+		var form = input.form;
+		var hidden = form && target ? form.elements[target] : null;
+		if(!hidden){ return; }
+		hidden.value = selectedAccountID(input);
+	}
+
+	function initUserPickers(scope){
+		var inputs = (scope || document).querySelectorAll('[data-jira-user-input]');
+		for(var i = 0; i < inputs.length; i++){
+			if(inputs[i].dataset.jiraUserReady){ continue; }
+			inputs[i].dataset.jiraUserReady = "1";
+			inputs[i].addEventListener('input', function(event){ syncUserPicker(event.currentTarget); });
+			inputs[i].addEventListener('change', function(event){ syncUserPicker(event.currentTarget); });
+		}
+	}
+
+	function syncUserPickers(scope){
+		var inputs = (scope || document).querySelectorAll('[data-jira-user-input]');
+		for(var i = 0; i < inputs.length; i++){ syncUserPicker(inputs[i]); }
+	}
+
 	function initAll(scope){
+		initUserPickers(scope || document);
 		var roots = (scope || document).querySelectorAll('[data-jira-create-launcher]');
 		for(var i = 0; i < roots.length; i++){ initLauncher(roots[i]); }
 	}
@@ -540,6 +631,7 @@ const componentJS = `
 
 	document.addEventListener('htmx:afterSwap', function(event){
 		initAll(document);
+		syncUserPickers(document);
 		closeCreatedDialog(event.target, event.detail);
 	});
 })();

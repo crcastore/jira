@@ -119,6 +119,9 @@ func TestHandleJiraCreatePageRendersProjectDropdown(t *testing.T) {
 			if r.URL.Query().Get("project") != "SCRUM" {
 				t.Errorf("assignable search project = %q, want SCRUM", r.URL.Query().Get("project"))
 			}
+			if r.URL.Query().Get("maxResults") != "20" {
+				t.Errorf("assignable search maxResults = %q, want 20", r.URL.Query().Get("maxResults"))
+			}
 			_, _ = w.Write([]byte(`[{"accountId":"712020:abc","displayName":"Chris","active":true}]`))
 		default:
 			t.Errorf("unexpected path = %s", r.URL.Path)
@@ -145,11 +148,70 @@ func TestHandleJiraCreatePageRendersProjectDropdown(t *testing.T) {
 	if !strings.Contains(body, `<select name="project_key"`) || !strings.Contains(body, `SCRUM - My Team`) {
 		t.Fatalf("expected Jira project dropdown in create page, got: %s", body)
 	}
-	if !strings.Contains(body, `<select name="assignee_account_id"`) || !strings.Contains(body, `Chris`) || !strings.Contains(body, `Unassigned`) {
-		t.Fatalf("expected Jira assignee dropdown in create page, got: %s", body)
+	if !strings.Contains(body, `window.JiraIssueCreate`) {
+		t.Fatalf("expected user picker script in create page, got: %s", body)
 	}
-	if !strings.Contains(body, `<select name="reporter_account_id"`) || !strings.Contains(body, `Default`) {
-		t.Fatalf("expected Jira reporter dropdown in create page, got: %s", body)
+	for _, want := range []string{
+		`name="assignee_search" type="search"`,
+		`list="jira-create-assignee-options"`,
+		`name="assignee_account_id" type="hidden"`,
+		`hx-get="/jira/create/users"`,
+		`data-jira-user-target="assignee_account_id"`,
+		`data-account-id="712020:abc"`,
+		`Chris`,
+	} {
+		if !strings.Contains(body, want) {
+			t.Fatalf("expected Jira assignee search picker marker %q in create page, got: %s", want, body)
+		}
+	}
+	for _, want := range []string{
+		`name="reporter_search" type="search"`,
+		`list="jira-create-reporter-options"`,
+		`name="reporter_account_id" type="hidden"`,
+		`data-jira-user-target="reporter_account_id"`,
+	} {
+		if !strings.Contains(body, want) {
+			t.Fatalf("expected Jira reporter search picker marker %q in create page, got: %s", want, body)
+		}
+	}
+}
+
+func TestHandleJiraCreateUsersSearchesAssignableUsers(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		if r.URL.Path != "/rest/api/3/user/assignable/search" {
+			t.Fatalf("unexpected Jira path: %s", r.URL.Path)
+		}
+		if got := r.URL.Query().Get("project"); got != "SCRUM" {
+			t.Errorf("project = %q, want SCRUM", got)
+		}
+		if got := r.URL.Query().Get("query"); got != "ada" {
+			t.Errorf("query = %q, want ada", got)
+		}
+		if got := r.URL.Query().Get("maxResults"); got != "20" {
+			t.Errorf("maxResults = %q, want 20", got)
+		}
+		_, _ = w.Write([]byte(`[{"accountId":"712020:ada","displayName":"Ada Lovelace","active":true}]`))
+	}))
+	defer server.Close()
+
+	app := &webApp{jc: &JiraClient{baseURL: server.URL, email: "me@example.com", token: "token", http: server.Client()}}
+	req := httptest.NewRequest(http.MethodGet, "/jira/create/users?field=assignee&project_key=SCRUM&assignee_search=ada", nil)
+	rr := httptest.NewRecorder()
+
+	app.handleJiraCreateUsers(rr, req)
+
+	if rr.Code != http.StatusOK {
+		t.Fatalf("status: got %d want 200", rr.Code)
+	}
+	body := rr.Body.String()
+	for _, want := range []string{
+		`<datalist id="jira-create-assignee-options">`,
+		`<option value="Ada Lovelace" data-account-id="712020:ada"></option>`,
+	} {
+		if !strings.Contains(body, want) {
+			t.Fatalf("user options missing %q\n%s", want, body)
+		}
 	}
 }
 

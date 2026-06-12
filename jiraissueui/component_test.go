@@ -222,7 +222,7 @@ func TestDialogEscapesTitleAndButtonLabel(t *testing.T) {
 	}
 }
 
-func TestFormRendersDropdownsAndSelectedValues(t *testing.T) {
+func TestFormRendersSearchPickersAndSelectedValues(t *testing.T) {
 	html, err := New().Form(FormData{
 		Endpoint:  "/jira/create",
 		Projects:  []Project{{Key: "SCRUM", Name: "My Team"}, {Key: "OPS", Name: "Ops"}},
@@ -257,11 +257,40 @@ func TestFormRendersDropdownsAndSelectedValues(t *testing.T) {
 		`<option value="octo/hello#12" selected>#12 Add login fix</option>`,
 		`<option value="High" selected>High</option>`,
 		`value="deploy, urgent"`,
-		`<option value="a1" selected>Ada</option>`,
-		`<option value="b2" selected>Bob</option>`,
+		`name="assignee_search" type="search" list="jira-create-assignee-options"`,
+		`hx-get="/jira/create/users"`,
+		`data-jira-user-target="assignee_account_id"`,
+		`name="assignee_account_id" type="hidden" value="a1"`,
+		`name="reporter_search" type="search" list="jira-create-reporter-options"`,
+		`data-jira-user-target="reporter_account_id"`,
+		`name="reporter_account_id" type="hidden" value="b2"`,
+		`<option value="Ada" data-account-id="a1"></option>`,
+		`<option value="Bob" data-account-id="b2"></option>`,
 	} {
 		if !strings.Contains(got, want) {
 			t.Fatalf("form missing %q\n%s", want, got)
+		}
+	}
+	if strings.Contains(got, `<select name="assignee_account_id"`) || strings.Contains(got, `<select name="reporter_account_id"`) {
+		t.Fatalf("user fields should not render bulk selects\n%s", got)
+	}
+}
+
+func TestUserOptionsHTMLRendersReplaceableDatalist(t *testing.T) {
+	html, err := New().UserOptionsHTML(UserOptionsData{
+		OptionsID: "jira-user-results",
+		Users:     []User{{AccountID: "a1", DisplayName: "Ada"}},
+	})
+	if err != nil {
+		t.Fatalf("UserOptionsHTML returned error: %v", err)
+	}
+	got := string(html)
+	for _, want := range []string{
+		`<datalist id="jira-user-results">`,
+		`<option value="Ada" data-account-id="a1"></option>`,
+	} {
+		if !strings.Contains(got, want) {
+			t.Fatalf("user options missing %q\n%s", want, got)
 		}
 	}
 }
