@@ -7,12 +7,13 @@ PR/MR changed files, and append those details to the Jira ticket description.
 
 ## The Extractable Pieces
 
-There are two reusable packages:
+There are three reusable packages:
 
 | Package | Purpose | Copy when |
 | --- | --- | --- |
 | [jiraissueui/](jiraissueui/) | Renders the create button, dialog, form, dependent PR/MR field, result fragment, CSS, JS, and parses submitted form fields into `IssueForm`. | You want the Jira ticket creation UI. |
 | [githubpr/](githubpr/) | Loads GitHub repositories, loads all-state PR/MR options for a selected repository, parses PR/MR references, fetches PR/MR metadata, fetches changed files, and appends those details to `IssueForm.Description`. | You want the repository + PR/MR picker and changed-file enrichment. |
+| [jiracreate/](jiracreate/) | Parses Jira issue type metadata, chooses parent/subtask issue types, maps `IssueForm` into Jira create args, builds subtask args, and parses Jira create responses. | You want parent issue + generated subtask creation helpers without this app's HTTP wiring. |
 
 The app-specific files under [cmd/jira-agent/](cmd/jira-agent/) only wire those
 packages to this repo's Jira and GitHub clients.
@@ -22,8 +23,8 @@ The create/subtask wiring is split by concern:
 | File | Purpose |
 | --- | --- |
 | [cmd/jira-agent/web_create.go](cmd/jira-agent/web_create.go) | HTTP form/page/fragment handlers. |
-| [cmd/jira-agent/web_create_issue.go](cmd/jira-agent/web_create_issue.go) | Parent issue creation, subtask creation, Jira create-response parsing, and form-to-Jira argument mapping. |
-| [cmd/jira-agent/web_issue_types.go](cmd/jira-agent/web_issue_types.go) | Jira createmeta parsing, parent issue type filtering, subtask issue type selection, and Epic/higher-level issue exclusion. |
+| [cmd/jira-agent/web_create_issue.go](cmd/jira-agent/web_create_issue.go) | App-specific orchestration around `jiracreate`: enrich form, create parent, create subtasks. |
+| [cmd/jira-agent/web_issue_types.go](cmd/jira-agent/web_issue_types.go) | Thin adapter that fetches Jira createmeta and delegates parsing/filtering to `jiracreate`. |
 | [cmd/jira-agent/web_data.go](cmd/jira-agent/web_data.go) | General Jira/GitHub panel data and assignable-user mapping. |
 
 ## Current Runtime Flow
@@ -55,7 +56,7 @@ The UI uses these submitted field names:
 | PR/MR reference | `pull_request` | `jiraissueui`, options from `githubpr.PullRequests(repo)` |
 | Priority | `priority` | `jiraissueui` |
 | Labels | `labels` | `jiraissueui` |
-| Subtask names | `subtask_names` | `jiraissueui`, comma/newline/semicolon-separated names used to create child sub-tasks |
+| Subtask names | `subtask_names` | `jiraissueui`, one submitted value per list row; pasted comma/newline/semicolon-separated names are also accepted |
 | Assignee | `assignee_account_id` | `jiraissueui` |
 | Reporter | `reporter_account_id` | `jiraissueui` |
 

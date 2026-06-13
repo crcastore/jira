@@ -17,7 +17,7 @@ func TestParseValuesNormalizesAndValidatesForm(t *testing.T) {
 		"pull_request":        {" octo/hello#12 "},
 		"priority":            {" High "},
 		"labels":              {" auth, frontend, , urgent "},
-		"subtask_names":       {" Ada\nBob, Grace;  "},
+		"subtask_names":       {" Ada\nBob", " Grace;  "},
 		"assignee_account_id": {" 712020:assignee "},
 		"reporter_account_id": {" 712020:reporter "},
 	})
@@ -268,8 +268,12 @@ func TestFormRendersSearchPickersAndSelectedValues(t *testing.T) {
 		`<option value="octo/hello#12" selected>#12 Add login fix</option>`,
 		`<option value="High" selected>High</option>`,
 		`value="deploy, urgent"`,
-		`<textarea name="subtask_names">Ada
-Bob</textarea>`,
+		`data-jira-subtask-list`,
+		`data-jira-subtask-items`,
+		`name="subtask_names" type="text" value="Ada"`,
+		`name="subtask_names" type="text" value="Bob"`,
+		`data-jira-subtask-add>Add name</button>`,
+		`data-jira-subtask-remove aria-label="Remove subtask name">Remove</button>`,
 		`name="assignee_search" type="search" list="jira-create-assignee-options"`,
 		`hx-get="/jira/create/users"`,
 		`data-jira-user-target="assignee_account_id"`,
@@ -286,6 +290,9 @@ Bob</textarea>`,
 	}
 	if strings.Contains(got, `<select name="assignee_account_id"`) || strings.Contains(got, `<select name="reporter_account_id"`) {
 		t.Fatalf("user fields should not render bulk selects\n%s", got)
+	}
+	if strings.Contains(got, `<textarea name="subtask_names"`) {
+		t.Fatalf("subtask names should render as list rows, not a textarea\n%s", got)
 	}
 }
 

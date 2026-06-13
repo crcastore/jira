@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/ccastorena/jira-agent/chat"
+	"github.com/ccastorena/jira-agent/jiracreate"
 )
 
 const testIssueTypesJSON = `{"values":[{"name":"Epic","subtask":false,"hierarchyLevel":1},{"name":"Request","subtask":false,"hierarchyLevel":0},{"name":"Task","subtask":false,"hierarchyLevel":0},{"name":"Subtask","subtask":true,"hierarchyLevel":-1}]}`
@@ -55,7 +56,7 @@ func TestParseJiraIssueTypesAcceptsResponseShapes(t *testing.T) {
 		json.RawMessage(`[{"name":"Task","subtask":false},{"name":"Subtask","subtask":true}]`),
 	}
 	for _, raw := range cases {
-		types, err := parseJiraIssueTypes(raw)
+		types, err := jiracreate.ParseIssueTypes(raw)
 		if err != nil {
 			t.Fatalf("parseJiraIssueTypes(%s) returned error: %v", raw, err)
 		}
@@ -66,16 +67,16 @@ func TestParseJiraIssueTypesAcceptsResponseShapes(t *testing.T) {
 }
 
 func TestParentIssueTypeNamesExcludeEpicAndPreferTask(t *testing.T) {
-	types, err := parseJiraIssueTypes(json.RawMessage(testIssueTypesJSON))
+	types, err := jiracreate.ParseIssueTypes(json.RawMessage(testIssueTypesJSON))
 	if err != nil {
 		t.Fatalf("parseJiraIssueTypes returned error: %v", err)
 	}
-	sortJiraIssueTypes(types)
-	names := parentIssueTypeNames(types)
+	jiracreate.SortIssueTypes(types)
+	names := jiracreate.ParentIssueTypeNames(types)
 	if strings.Join(names, ",") != "Task,Request" {
 		t.Fatalf("parent issue type names = %#v, want Task, Request", names)
 	}
-	if got := validParentIssueType("Epic", types); got != "Task" {
+	if got := jiracreate.ValidParentIssueType("Epic", types); got != "Task" {
 		t.Fatalf("validParentIssueType(Epic) = %q, want Task", got)
 	}
 }

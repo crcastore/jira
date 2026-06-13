@@ -37,6 +37,7 @@ This document explains how the chat engine, tools, model selection, and history/
 6. External integrations
    - Jira client: [cmd/jira-agent/jira.go](cmd/jira-agent/jira.go)
    - GitHub client: [cmd/jira-agent/github.go](cmd/jira-agent/github.go)
+   - Jira create helpers: [jiracreate/](jiracreate/)
 
 ## Model Selection
 

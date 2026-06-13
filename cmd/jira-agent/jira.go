@@ -10,6 +10,8 @@ import (
 	"os"
 	"strings"
 	"time"
+
+	"github.com/ccastorena/jira-agent/jiracreate"
 )
 
 // JiraClient is a thin wrapper around the Jira Cloud REST API v3.
@@ -123,18 +125,7 @@ func (c *JiraClient) ListIssueTypes(projectKey string) (json.RawMessage, error) 
 	return c.request("GET", "/rest/api/3/issue/createmeta/"+url.PathEscape(projectKey)+"/issuetypes", nil, nil)
 }
 
-type CreateIssueArgs struct {
-	ProjectKey        string   `json:"project_key"`
-	Summary           string   `json:"summary"`
-	IssueType         string   `json:"issue_type,omitempty"`
-	ParentID          string   `json:"parent_id,omitempty"`
-	ParentKey         string   `json:"parent_key,omitempty"`
-	Description       string   `json:"description,omitempty"`
-	AssigneeAccountID string   `json:"assignee_account_id,omitempty"`
-	ReporterAccountID string   `json:"reporter_account_id,omitempty"`
-	Priority          string   `json:"priority,omitempty"`
-	Labels            []string `json:"labels,omitempty"`
-}
+type CreateIssueArgs = jiracreate.CreateIssueArgs
 
 func (c *JiraClient) CreateIssue(a CreateIssueArgs) (json.RawMessage, error) {
 	if a.IssueType == "" {

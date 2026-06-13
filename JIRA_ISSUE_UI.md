@@ -4,7 +4,7 @@ This is a handoff guide for another Copilot or engineer who needs to pull the Ji
 
 For a fuller explanation of the complete create-ticket flow, including GitHub repository selection, PR/MR selection, changed-file fetching, and Jira description enrichment, see [JIRA_CREATE_EXTRACTION.md](JIRA_CREATE_EXTRACTION.md).
 
-The reusable form code is isolated in [jiraissueui/component.go](jiraissueui/component.go#L1-L600). The reusable GitHub repository + PR/MR picker and changed-file enrichment logic is isolated in [githubpr/picker.go](githubpr/picker.go). The app-specific files under [cmd/jira-agent/](cmd/jira-agent/) are examples of how this repo wires those reusable packages to its own Jira and GitHub clients.
+The reusable form code is isolated in [jiraissueui/component.go](jiraissueui/component.go#L1-L600). The reusable GitHub repository + PR/MR picker and changed-file enrichment logic is isolated in [githubpr/picker.go](githubpr/picker.go). Jira create/subtask helpers live in [jiracreate/](jiracreate/). The app-specific files under [cmd/jira-agent/](cmd/jira-agent/) are examples of how this repo wires those reusable packages to its own Jira and GitHub clients.
 
 ## What To Copy
 
@@ -16,6 +16,7 @@ Copy or import the reusable package first. Do not start by copying the dashboard
 | [jiraissueui/component_test.go](jiraissueui/component_test.go#L1-L289) | `jiraissueui/component_test.go` or `internal/jiraissueui/component_test.go` | recommended | Copy with the package so the target project can prove the extraction still renders and parses correctly. |
 | [githubpr/picker.go](githubpr/picker.go) | `githubpr/picker.go` or `internal/githubpr/picker.go` | yes, for repo + PR/MR picker | Contains the stealable GitHub logic: list repositories, list all-state PR/MR options, parse PR/MR references, fetch PR/MR details, fetch changed files, and append those details to `jiraissueui.IssueForm.Description`. |
 | [githubpr/picker_test.go](githubpr/picker_test.go) | `githubpr/picker_test.go` or `internal/githubpr/picker_test.go` | recommended | Tests the exact flow people usually break: selected repo -> selected PR/MR -> changed files in the Jira description. |
+| [jiracreate/](jiracreate/) | `jiracreate/` or `internal/jiracreate/` | yes, for parent + subtask creation | Contains Jira issue type parsing/filtering, form-to-create-args mapping, subtask arg building, and create-response parsing. |
 | [cmd/jira-agent/web_create.go](cmd/jira-agent/web_create.go#L17-L163) | target app handler, for example `internal/web/jira_create.go` | reference only | Use as a model for GET, POST, HTMX fragment response, and Jira create mapping. Do not copy unchanged. |
 | [cmd/jira-agent/web_data.go](cmd/jira-agent/web_data.go#L109-L157) | target Jira adapter, for example `internal/jira/options.go` | reference only | Shows how Jira REST JSON is mapped into `jiraissueui.Project` and `jiraissueui.User`. |
 | [cmd/jira-agent/web_server.go](cmd/jira-agent/web_server.go#L15-L21) | target app state struct | reference only | Shows import + storing `*jiraissueui.Component` on the app. |
@@ -385,7 +386,7 @@ When creating an issue, convert `jiraissueui.IssueForm` into the target Jira cli
 | `Description` | `description` | Plain text from the textarea. |
 | `Priority` | `priority` | Empty string means no priority. |
 | `Labels` | `labels` | Comma-separated input parsed into `[]string`. |
-| `SubtaskNames` | `subtask_names` | Comma/newline/semicolon-separated names. The source app creates one child `Sub-task` per name. |
+| `SubtaskNames` | `subtask_names` | One value per visible list row. Pasted comma/newline/semicolon-separated names are also accepted. The source app creates one child `Sub-task` per name. |
 | `AssigneeAccountID` | `assignee_account_id` | Empty string means unassigned/default behavior. |
 | `ReporterAccountID` | `reporter_account_id` | Empty string means Jira default behavior. |
 

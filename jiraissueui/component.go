@@ -363,7 +363,7 @@ func ParseValues(values url.Values) (IssueForm, error) {
 		PullRequest:       strings.TrimSpace(values.Get("pull_request")),
 		Priority:          strings.TrimSpace(values.Get("priority")),
 		Labels:            splitCSV(values.Get("labels")),
-		SubtaskNames:      splitList(values.Get("subtask_names")),
+		SubtaskNames:      splitLists(values["subtask_names"]),
 		AssigneeAccountID: strings.TrimSpace(values.Get("assignee_account_id")),
 		ReporterAccountID: strings.TrimSpace(values.Get("reporter_account_id")),
 	}
@@ -402,6 +402,16 @@ func splitList(raw string) []string {
 	parts := strings.FieldsFunc(raw, func(r rune) bool {
 		return r == ',' || r == '\n' || r == '\r' || r == ';'
 	})
+	return cleanList(parts)
+}
+
+func splitLists(raws []string) []string {
+	parts := make([]string, 0, len(raws))
+	for _, raw := range raws {
+		parts = append(parts, strings.FieldsFunc(raw, func(r rune) bool {
+			return r == ',' || r == '\n' || r == '\r' || r == ';'
+		})...)
+	}
 	return cleanList(parts)
 }
 
@@ -465,7 +475,20 @@ const formTmpl = `{{define "jira-create-form"}}
       </label>
       <label class="hx-jira-create-field">Labels<input name="labels" type="text" value="{{.Values.LabelsCSV}}" autocomplete="off"></label>
     </div>
-		<label class="hx-jira-create-field">Subtask names<textarea name="subtask_names">{{.Values.SubtaskNamesText}}</textarea></label>
+		<div class="hx-jira-create-field">Subtask names
+			<div class="hx-jira-subtasks" data-jira-subtask-list>
+				<div class="hx-jira-subtask-items" data-jira-subtask-items>
+					{{if .Values.SubtaskNames}}
+					{{range .Values.SubtaskNames}}
+					<div class="hx-jira-subtask-row"><input name="subtask_names" type="text" value="{{.}}" autocomplete="off"><button class="hx-jira-subtask-remove" type="button" data-jira-subtask-remove aria-label="Remove subtask name">Remove</button></div>
+					{{end}}
+					{{else}}
+					<div class="hx-jira-subtask-row"><input name="subtask_names" type="text" value="" autocomplete="off"><button class="hx-jira-subtask-remove" type="button" data-jira-subtask-remove aria-label="Remove subtask name">Remove</button></div>
+					{{end}}
+				</div>
+				<button class="hx-jira-subtask-add" type="button" data-jira-subtask-add>Add name</button>
+			</div>
+		</div>
     <div class="hx-jira-create-grid">
       <label class="hx-jira-create-field">Assignee
 				<input name="assignee_search" type="search" list="{{.AssigneeOptionsID}}" autocomplete="off" placeholder="Search users" hx-get="{{.UsersEndpoint}}" hx-trigger="input changed delay:250ms, focus once" hx-target="#{{.AssigneeOptionsID}}" hx-swap="outerHTML" hx-include="[name='project_key'], this" hx-vals='{"field":"assignee"}' data-jira-user-input data-jira-user-target="assignee_account_id">
@@ -629,8 +652,63 @@ const componentJS = `
 		for(var i = 0; i < inputs.length; i++){ syncUserPicker(inputs[i]); }
 	}
 
+	function createSubtaskRow(value){
+		var row = document.createElement('div');
+		row.className = 'hx-jira-subtask-row';
+		var input = document.createElement('input');
+		input.name = 'subtask_names';
+		input.type = 'text';
+		input.autocomplete = 'off';
+		input.value = value || '';
+		var remove = document.createElement('button');
+		remove.className = 'hx-jira-subtask-remove';
+		remove.type = 'button';
+		remove.setAttribute('data-jira-subtask-remove', '');
+		remove.setAttribute('aria-label', 'Remove subtask name');
+		remove.textContent = 'Remove';
+		row.appendChild(input);
+		row.appendChild(remove);
+		return row;
+	}
+
+	function ensureSubtaskRow(list){
+		var items = list.querySelector('[data-jira-subtask-items]');
+		if(items && !items.querySelector('[name="subtask_names"]')){
+			items.appendChild(createSubtaskRow(''));
+		}
+	}
+
+	function initSubtaskLists(scope){
+		var lists = (scope || document).querySelectorAll('[data-jira-subtask-list]');
+		for(var i = 0; i < lists.length; i++){
+			var list = lists[i];
+			if(list.dataset.jiraSubtaskReady){ continue; }
+			list.dataset.jiraSubtaskReady = '1';
+			list.addEventListener('click', function(event){
+				var add = event.target.closest ? event.target.closest('[data-jira-subtask-add]') : null;
+				var remove = event.target.closest ? event.target.closest('[data-jira-subtask-remove]') : null;
+				var currentList = event.currentTarget;
+				var items = currentList.querySelector('[data-jira-subtask-items]');
+				if(add && items){
+					event.preventDefault();
+					var row = createSubtaskRow('');
+					items.appendChild(row);
+					var input = row.querySelector('input');
+					if(input){ input.focus(); }
+				}
+				if(remove){
+					event.preventDefault();
+					var rowToRemove = remove.closest('.hx-jira-subtask-row');
+					if(rowToRemove){ rowToRemove.remove(); }
+					ensureSubtaskRow(currentList);
+				}
+			});
+		}
+	}
+
 	function initAll(scope){
 		initUserPickers(scope || document);
+		initSubtaskLists(scope || document);
 		var roots = (scope || document).querySelectorAll('[data-jira-create-launcher]');
 		for(var i = 0; i < roots.length; i++){ initLauncher(roots[i]); }
 	}
@@ -711,6 +789,30 @@ const componentCSS = `
   font-weight: 700;
   padding: 10px 14px;
   cursor: pointer;
+}
+.hx-jira-subtasks,
+.hx-jira-subtask-items {
+	display: grid;
+	gap: 8px;
+}
+.hx-jira-subtask-row {
+	display: grid;
+	grid-template-columns: minmax(0, 1fr) auto;
+	gap: 8px;
+	align-items: center;
+}
+.hx-jira-create .hx-jira-subtask-add,
+.hx-jira-create .hx-jira-subtask-remove {
+	border: 1px solid var(--jira-create-border, #d1d5db);
+	border-radius: 8px;
+	background: var(--jira-create-button-bg, #fff);
+	color: var(--jira-create-ink, #1f2937);
+	font-size: 13px;
+	font-weight: 700;
+	padding: 8px 10px;
+}
+.hx-jira-create .hx-jira-subtask-add {
+	justify-self: start;
 }
 .hx-jira-create-button {
 	display: inline-flex;
@@ -796,5 +898,6 @@ const componentCSS = `
 }
 @media (max-width: 720px) {
   .hx-jira-create-grid { grid-template-columns: 1fr; }
+	.hx-jira-subtask-row { grid-template-columns: 1fr; }
 }
 `

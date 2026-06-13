@@ -6,6 +6,7 @@ import (
 	"strings"
 
 	"github.com/ccastorena/jira-agent/githubpr"
+	"github.com/ccastorena/jira-agent/jiracreate"
 	"github.com/ccastorena/jira-agent/jiraissueui"
 )
 
@@ -66,9 +67,9 @@ func (a *webApp) jiraCreateFormData(values jiraissueui.IssueForm, result jiraiss
 		values.ProjectKey = projects[0].Key
 	}
 	issueTypes, issueTypesErr := a.fetchJiraIssueTypes(values.ProjectKey)
-	parentIssueTypes := parentIssueTypeNames(issueTypes)
+	parentIssueTypes := jiracreate.ParentIssueTypeNames(issueTypes)
 	if len(parentIssueTypes) > 0 {
-		values.IssueType = validParentIssueType(values.IssueType, issueTypes)
+		values.IssueType = jiracreate.ValidParentIssueType(values.IssueType, issueTypes)
 	}
 	assignees, assigneesErr := a.fetchJiraAssignableUsers(values.ProjectKey, "")
 	if values.PullRequestRepo == "" && values.PullRequest != "" {
